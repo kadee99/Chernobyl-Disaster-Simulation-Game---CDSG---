@@ -120,6 +120,18 @@ public class ChernobylGameCore {
     private static final float ROOM_FLOOR = 20f;               // Minimum Y (above floor)
     private static final float ROOM_CEILING = 6 * BLOCK_SIZE - 20f; // Maximum Y (below ceiling)
 
+    // === REACTOR HALL (Room 2) ===
+    // The corridor exits the front wall (-Z) at x=0 and goes further -Z
+    private static final float CORRIDOR_START_Z = -12 * BLOCK_SIZE;  // Front wall Z
+    private static final float CORRIDOR_END_Z = -18 * BLOCK_SIZE;    // Where corridor meets reactor hall
+    private static final float CORRIDOR_HALF_WIDTH = 2 * BLOCK_SIZE; // Corridor is 4 blocks wide
+    private static final float REACTOR_HALL_MIN_X = -10 * BLOCK_SIZE; // Reactor hall X bounds
+    private static final float REACTOR_HALL_MAX_X = 10 * BLOCK_SIZE;
+    private static final float REACTOR_HALL_MIN_Z = -18 * BLOCK_SIZE; // Where corridor ends
+    private static final float REACTOR_HALL_MAX_Z = -30 * BLOCK_SIZE; // Far end of reactor hall
+    private static final int REACTOR_HALL_HEIGHT = 8; // Taller ceiling
+    private boolean reactorHallDoorOpen = false;       // Door state
+
     // === STORY SYSTEM ===
     private int storyPhase = 0; // 0=intro, 1=talk to akimov, 2=go to toptunov, 3=test begins, etc.
     private String currentObjective = "";
@@ -4520,6 +4532,13 @@ public class ChernobylGameCore {
         blockTextures.put("akimov_label", generateNameRoleLabelTexture("A. AKIMOV", "SHIFT SUPERVISOR"));
         blockTextures.put("toptunov_label", generateNameRoleLabelTexture("L. TOPTUNOV", "SR. REACTOR ENGINEER"));
         blockTextures.put("dyatlov_label", generateNameRoleLabelTexture("A. DYATLOV", "DEPUTY CHIEF ENGINEER"));
+
+        // Perevozchenko NPC textures (reactor hall worker - orange hard hat + coveralls)
+        blockTextures.put("perevozchenko_head", generatePerevozchHeadAtlas());
+        blockTextures.put("perevozchenko_body", generateEngineerBodyTexture(0x3A5A3A)); // Dark green coveralls
+        blockTextures.put("perevozchenko_legs", generateEngineerLegsTexture(0x2A3A2A)); // Dark green pants
+        blockTextures.put("perevozchenko_arms", generateEngineerArmsTexture(0xCC8855)); // Skin tone arms
+        blockTextures.put("perevozchenko_label", generateNameRoleLabelTexture("V. PEREVOZCHENKO", "REACTOR SECTION FOREMAN"));
     }
     
     // Chernobyl-specific texture generators
@@ -6157,13 +6176,24 @@ public class ChernobylGameCore {
             }
         }
         
-        // === FRONT WALL (-Z) - Plain gray wall ===
+        // === FRONT WALL (-Z) - With door opening to corridor ===
+        // Door opening at x = -2 to 2 (4 blocks wide), h = 0 to 3 (3 blocks tall)
         for (int x = -roomWidth; x <= roomWidth; x++) {
             for (int h = 0; h < wallHeight; h++) {
-                addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+                boolean isDoorOpening = (x >= -2 && x <= 2 && h < 3);
+                if (!isDoorOpening) {
+                    addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+                }
             }
         }
+        // Door frame accent (dark metal around the opening)
+        addTexturedCube(-2.5f * BLOCK_SIZE, 1.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
+               BLOCK_SIZE * 0.3f, 3 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
+        addTexturedCube(2.5f * BLOCK_SIZE, 1.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
+               BLOCK_SIZE * 0.3f, 3 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
+        addTexturedCube(0, 3f * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
+               5 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.3f, "iron_block");
         
         // === LEFT WALL (-X) - With observation window ===
         int windowStartZ = -4;  // Window start position
@@ -6353,6 +6383,9 @@ public class ChernobylGameCore {
         
         // Build reactor hall visible through window
         buildReactorHall();
+        
+        // Build corridor and walkable reactor hall (Room 2)
+        buildCorridorAndReactorHall();
     }
     
     private void buildReactorHall() {
@@ -6491,6 +6524,205 @@ public class ChernobylGameCore {
             addTexturedCube(hallX - 3 * BLOCK_SIZE, hallY + BLOCK_SIZE, hallZ + z * BLOCK_SIZE,
                    BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.2f, "iron_block");
         }
+    }
+
+    private void buildCorridorAndReactorHall() {
+        // =========================================================
+        // CORRIDOR: From control room front wall (-12*BS) to -18*BS
+        // Then REACTOR HALL: Large room from z = -18*BS to -30*BS
+        // All at same floor level as control room (y=0)
+        // =========================================================
+
+        int corridorWidth = 2; // half-width in blocks (4 blocks total)
+        int corridorWallH = 4; // shorter than control room
+        float corridorFloorZ = -12; // starts after front wall (in block units)
+        float corridorEndZ = -18;   // ends where reactor hall begins
+
+        // === CORRIDOR FLOOR ===
+        for (int x = -corridorWidth; x <= corridorWidth; x++) {
+            for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
+                String texture = ((x + z) % 2 == 0) ? "gray_concrete" : "light_gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, 0, z * BLOCK_SIZE, BLOCK_SIZE, 10, BLOCK_SIZE, texture);
+            }
+        }
+
+        // === CORRIDOR WALLS (left and right) ===
+        for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
+            for (int h = 0; h < corridorWallH; h++) {
+                // Left corridor wall
+                addTexturedCube((-corridorWidth - 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+                // Right corridor wall
+                addTexturedCube((corridorWidth + 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+        }
+
+        // === CORRIDOR CEILING ===
+        for (int x = -corridorWidth; x <= corridorWidth; x++) {
+            for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
+                boolean isLight = (z % 3 == 0) && (x == 0);
+                String texture = isLight ? "fluorescent_light" : "gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, corridorWallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
+            }
+        }
+
+        // === CORRIDOR PIPES along ceiling ===
+        addTexturedCube(-corridorWidth * BLOCK_SIZE + BLOCK_SIZE * 0.3f,
+               (corridorWallH - 0.5f) * BLOCK_SIZE, -15 * BLOCK_SIZE,
+               BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.2f, 6 * BLOCK_SIZE, "iron_block");
+        addTexturedCube(corridorWidth * BLOCK_SIZE - BLOCK_SIZE * 0.3f,
+               (corridorWallH - 0.5f) * BLOCK_SIZE, -15 * BLOCK_SIZE,
+               BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.2f, 6 * BLOCK_SIZE, "iron_block");
+
+        // ===================================
+        // === REACTOR HALL (Room 2) ===
+        // ===================================
+        int hallMinX = -10; // in block units
+        int hallMaxX = 10;
+        int hallMinZ = -30; // far end
+        int hallMaxZ = -18; // connects to corridor
+        int hallWallH = REACTOR_HALL_HEIGHT;
+
+        // === REACTOR HALL FLOOR ===
+        for (int x = hallMinX; x <= hallMaxX; x++) {
+            for (int z = hallMinZ; z <= hallMaxZ; z++) {
+                String texture = ((x + z) % 2 == 0) ? "reactor_floor_metal" : "gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, 0, z * BLOCK_SIZE, BLOCK_SIZE, 10, BLOCK_SIZE, texture);
+            }
+        }
+
+        // === REACTOR HALL WALLS ===
+        // Back wall (far -Z)
+        for (int x = hallMinX; x <= hallMaxX; x++) {
+            for (int h = 0; h < hallWallH; h++) {
+                addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, hallMinZ * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+            }
+        }
+        // Left wall
+        for (int z = hallMinZ; z <= hallMaxZ; z++) {
+            for (int h = 0; h < hallWallH; h++) {
+                addTexturedCube(hallMinX * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+            }
+        }
+        // Right wall
+        for (int z = hallMinZ; z <= hallMaxZ; z++) {
+            for (int h = 0; h < hallWallH; h++) {
+                addTexturedCube(hallMaxX * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+            }
+        }
+        // Front wall (where corridor enters) - only the parts outside the corridor opening
+        for (int x = hallMinX; x <= hallMaxX; x++) {
+            for (int h = 0; h < hallWallH; h++) {
+                boolean isCorridor = (x >= -corridorWidth && x <= corridorWidth && h < corridorWallH);
+                if (!isCorridor) {
+                    addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, hallMaxZ * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
+            }
+        }
+
+        // === REACTOR HALL CEILING ===
+        for (int x = hallMinX; x <= hallMaxX; x++) {
+            for (int z = hallMinZ; z <= hallMaxZ; z++) {
+                boolean isLight = (Math.abs(x) % 5 == 0) && (Math.abs(z) % 4 == 0);
+                String texture = isLight ? "fluorescent_light" : "gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, hallWallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
+            }
+        }
+
+        // === REACTOR TOP PLATFORM (central feature) ===
+        // A raised circular platform representing the upper biological shield
+        float platCX = 0;
+        float platCZ = -24 * BLOCK_SIZE; // Center of reactor hall
+        float platY = BLOCK_SIZE * 0.4f; // Slightly raised
+        int platRadius = 5;
+
+        Random capRng = new Random(2604); // April 26th seed
+        for (int dx = -platRadius; dx <= platRadius; dx++) {
+            for (int dz = -platRadius; dz <= platRadius; dz++) {
+                float dist = (float)Math.sqrt(dx*dx + dz*dz);
+                if (dist <= platRadius) {
+                    // Platform base
+                    addTexturedCube(platCX + dx * BLOCK_SIZE, platY, platCZ + dz * BLOCK_SIZE,
+                           BLOCK_SIZE * 0.95f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.95f, "reactor_floor_metal");
+
+                    // Fuel rod caps on inner area
+                    if (dist < platRadius - 1) {
+                        float chance = capRng.nextFloat();
+                        String capTex;
+                        if (chance < 0.1f) capTex = "fuel_cap_red";
+                        else if (chance < 0.2f) capTex = "fuel_cap_blue";
+                        else if (chance < 0.4f) capTex = "fuel_cap_yellow";
+                        else capTex = "fuel_cap_gray";
+                        addTexturedCube(platCX + dx * BLOCK_SIZE, platY + BLOCK_SIZE * 0.2f, platCZ + dz * BLOCK_SIZE,
+                               BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.12f, BLOCK_SIZE * 0.3f, capTex);
+                    }
+                }
+            }
+        }
+
+        // === METAL RAILINGS around reactor platform ===
+        for (int i = 0; i < 24; i++) {
+            double angle = i * Math.PI * 2 / 24;
+            float railR = (platRadius + 1.5f) * BLOCK_SIZE;
+            float rx = platCX + (float)Math.cos(angle) * railR;
+            float rz = platCZ + (float)Math.sin(angle) * railR;
+            // Vertical post
+            addTexturedCube(rx, BLOCK_SIZE * 0.5f, rz,
+                   BLOCK_SIZE * 0.12f, BLOCK_SIZE * 1.0f, BLOCK_SIZE * 0.12f, "iron_block");
+        }
+        // Horizontal rail ring
+        for (int i = 0; i < 48; i++) {
+            double angle = i * Math.PI * 2 / 48;
+            float railR = (platRadius + 1.5f) * BLOCK_SIZE;
+            float rx = platCX + (float)Math.cos(angle) * railR;
+            float rz = platCZ + (float)Math.sin(angle) * railR;
+            addTexturedCube(rx, BLOCK_SIZE * 0.9f, rz,
+                   BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.15f, "iron_block");
+        }
+
+        // === INDUSTRIAL EQUIPMENT ===
+        // Large coolant pipes along left wall
+        for (int z = hallMinZ + 2; z <= hallMaxZ - 2; z += 2) {
+            addTexturedCube((hallMinX + 1.5f) * BLOCK_SIZE, BLOCK_SIZE * 1.5f, z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.4f, BLOCK_SIZE * 3f, BLOCK_SIZE * 0.4f, "light_blue_concrete");
+        }
+        // Horizontal pipe connecting them
+        addTexturedCube((hallMinX + 1.5f) * BLOCK_SIZE, BLOCK_SIZE * 3f,
+               ((hallMinZ + hallMaxZ) / 2f) * BLOCK_SIZE,
+               BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.3f,
+               (hallMaxZ - hallMinZ) / 2f * BLOCK_SIZE, "light_blue_concrete");
+
+        // Emergency coolant valve (interactable in future)
+        addTexturedCube((hallMaxX - 2) * BLOCK_SIZE, BLOCK_SIZE * 0.8f, (hallMinZ + 3) * BLOCK_SIZE,
+               BLOCK_SIZE * 0.8f, BLOCK_SIZE * 1.2f, BLOCK_SIZE * 0.8f, "iron_block");
+        addTexturedCube((hallMaxX - 2) * BLOCK_SIZE, BLOCK_SIZE * 1.5f, (hallMinZ + 3) * BLOCK_SIZE,
+               BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.6f, BLOCK_SIZE * 0.4f, "redstone_block");
+
+        // Equipment cabinets along right wall
+        for (int z = hallMinZ + 2; z <= hallMaxZ - 2; z += 3) {
+            addTexturedCube((hallMaxX - 1.5f) * BLOCK_SIZE, BLOCK_SIZE, z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.6f, BLOCK_SIZE * 2f, BLOCK_SIZE * 1.2f, "control_panel_cream");
+        }
+
+        // === SIGN above corridor entrance (inside reactor hall) ===
+        addTexturedCube(0, (corridorWallH - 0.5f) * BLOCK_SIZE, (hallMaxZ + 0.3f) * BLOCK_SIZE,
+               3 * BLOCK_SIZE, BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.1f, "redstone_block");
+
+        // === NPC: PEREVOZCHENKO (Reactor Section Foreman) ===
+        // Standing near the reactor platform, to the right
+        createNPCEngineer("Perevozchenko",
+            4 * BLOCK_SIZE,         // x: right of reactor platform
+            0,                       // y: floor level
+            -22 * BLOCK_SIZE,       // z: in the reactor hall
+            -1.57f,                 // facing: towards the reactor (negative X direction)
+            "perevozchenko_head", "perevozchenko_body", "perevozchenko_legs", "perevozchenko_arms");
     }
     
     private int generateReactorFloorTexture() {
