@@ -221,6 +221,28 @@ public class ChernobylGameCore {
     private boolean elenaVoidWarningGiven = false;    // Whether player detected void danger
     private float elenaScanNeglectPenalty = 0f;  // Stability penalty for not scanning enough
 
+    // === INDICATOR PANEL ENHANCED SYSTEM ===
+    private float indicatorDriftPower = 0f;       // Drift offset applied to power reading
+    private float indicatorDriftTemp = 0f;        // Drift offset applied to temperature reading
+    private float indicatorDriftPressure = 0f;    // Drift offset applied to pressure reading
+    private float indicatorDriftFlux = 0f;        // Drift offset applied to neutron flux reading
+    private float indicatorDriftXenon = 0f;       // Drift offset applied to xenon reading
+    private float indicatorDriftCoolant = 0f;     // Drift offset applied to coolant reading
+    private float indicatorCheckTimer = 0f;       // Seconds since last indicator panel check
+    private float indicatorCheckBonus = 0f;       // Stability bonus from regular checking (max +10%)
+    private float indicatorNeglectPenalty = 0f;   // Stability penalty for not checking (max -10%)
+    private int indicatorCalibrationsDone = 0;    // Total calibrations performed
+    private int indicatorAlarmsAcked = 0;         // Total alarms acknowledged
+    private boolean[] indicatorAlarmActive = new boolean[6]; // Alarms: power, temp, pressure, flux, coolant, rods
+    private boolean[] indicatorAlarmAcknowledged = new boolean[6]; // Which alarms player acknowledged
+    private float[] powerHistory = new float[20];     // Circular buffer of recent power readings
+    private float[] tempHistory = new float[20];      // Circular buffer of recent temp readings
+    private float[] pressureHistory = new float[20];  // Circular buffer of recent pressure readings
+    private int paramHistoryIdx = 0;                  // Current index in circular buffers
+    private float paramHistoryTimer = 0f;             // Timer for recording parameter snapshots
+    private int indicatorHoveredGauge = -1;           // Which gauge is mouse-hovered
+    private java.util.Random indicatorRng = new java.util.Random(); // RNG for drift
+
     // Mouse state for machine UI
     private float machineMouseX = 0f;           // Mouse X in screen coords
     private float machineMouseY = 0f;           // Mouse Y in screen coords (flipped for OpenGL)
@@ -285,7 +307,7 @@ public class ChernobylGameCore {
 
     // Tutorial
     private int tutorialStep = 0;
-    private static final int TUTORIAL_TOTAL = 7;
+    private static final int TUTORIAL_TOTAL = 9;
     private boolean tutClickHeld = false;
 
     // Machine interaction points (x, z positions)
@@ -1302,6 +1324,25 @@ public class ChernobylGameCore {
         elenaVoidWarningGiven = false;
         elenaScanNeglectPenalty = 0f;
         java.util.Arrays.fill(elenaScannedSectors, false);
+        indicatorDriftPower = 0f;
+        indicatorDriftTemp = 0f;
+        indicatorDriftPressure = 0f;
+        indicatorDriftFlux = 0f;
+        indicatorDriftXenon = 0f;
+        indicatorDriftCoolant = 0f;
+        indicatorCheckTimer = 0f;
+        indicatorCheckBonus = 0f;
+        indicatorNeglectPenalty = 0f;
+        indicatorCalibrationsDone = 0;
+        indicatorAlarmsAcked = 0;
+        java.util.Arrays.fill(indicatorAlarmActive, false);
+        java.util.Arrays.fill(indicatorAlarmAcknowledged, false);
+        java.util.Arrays.fill(powerHistory, 0f);
+        java.util.Arrays.fill(tempHistory, 0f);
+        java.util.Arrays.fill(pressureHistory, 0f);
+        paramHistoryIdx = 0;
+        paramHistoryTimer = 0f;
+        indicatorHoveredGauge = -1;
         machineUIActive = false;
         dialogueActive = false;
         storyIntroShown = false;
@@ -1835,101 +1876,166 @@ public class ChernobylGameCore {
         String[] lines;
         switch (tutorialStep) {
             case 0:
-                title = "WELCOME TO CHERNOBYL";
+                title = "CHERNOBYL - APRIL 26, 1986";
                 lines = new String[]{
+                    "IT IS THE NIGHT OF APRIL 25TH, 1986.",
                     "YOU ARE A REACTOR OPERATOR AT THE CHERNOBYL",
-                    "NUCLEAR POWER PLANT ON THE NIGHT OF APRIL 26 1986.",
+                    "NUCLEAR POWER PLANT IN SOVIET UKRAINE.",
                     "",
-                    "A DANGEROUS SAFETY TEST IS BEING CONDUCTED ON",
-                    "REACTOR 4. YOUR DECISIONS WILL DETERMINE THE",
-                    "OUTCOME OF THIS FATEFUL NIGHT.",
+                    "*A SAFETY TEST HAS BEEN ORDERED ON REACTOR 4.",
+                    "*THE TEST WILL PUSH THE REACTOR TO ITS LIMITS.",
                     "",
-                    "FOLLOW THE STORY AND INTERACT WITH THE EQUIPMENT",
-                    "AND YOUR FELLOW ENGINEERS TO SEE WHAT HAPPENS."
+                    "YOUR JOB: FOLLOW ORDERS, OPERATE THE REACTOR,",
+                    "AND TRY TO PREVENT THE WORST NUCLEAR DISASTER",
+                    "IN HISTORY.",
+                    "",
+                    "!YOUR CHOICES DETERMINE IF YOU SAVE THE REACTOR",
+                    "!OR CAUSE A CATASTROPHIC MELTDOWN."
                 };
                 break;
             case 1:
-                title = "MOVEMENT CONTROLS";
+                title = "THE RBMK-1000 REACTOR";
                 lines = new String[]{
-                    "W - MOVE FORWARD",
-                    "S - MOVE BACKWARD",
-                    "A - STRAFE LEFT",
-                    "D - STRAFE RIGHT",
+                    "THE RBMK-1000 IS A SOVIET-DESIGNED REACTOR.",
+                    "IT HAS A FATAL DESIGN FLAW:",
                     "",
-                    "HOLD SHIFT - SPRINT (2.5X SPEED)",
-                    "SPACE - JUMP",
+                    "!POSITIVE VOID COEFFICIENT - WHEN COOLANT BOILS,",
+                    "!POWER INCREASES INSTEAD OF DECREASING.",
                     "",
-                    "USE THE MOUSE TO LOOK AROUND."
+                    "*KEY PARAMETERS YOU MUST MONITOR:",
+                    "  POWER (MW) - HOW MUCH ENERGY THE CORE PRODUCES",
+                    "  TEMPERATURE (C) - CORE HEAT LEVEL",
+                    "  XENON-135 - NEUTRON POISON THAT BUILDS UP",
+                    "  STABILITY (%) - OVERALL REACTOR SAFETY",
+                    "",
+                    "+KEEP STABILITY HIGH. AT 0% THE CORE IS DOOMED."
                 };
                 break;
             case 2:
-                title = "CAMERA AND VIEW";
+                title = "CONTROLS & MOVEMENT";
                 lines = new String[]{
-                    "MOVE THE MOUSE - LOOK AROUND",
-                    "F - TOGGLE FULLSCREEN",
-                    "V - TOGGLE 3RD PERSON VIEW",
+                    ">W/A/S/D - MOVE       SHIFT - SPRINT",
+                    ">MOUSE - LOOK AROUND  SPACE - JUMP",
+                    ">F - FULLSCREEN       V - 3RD PERSON VIEW",
+                    ">M - PAUSE MENU       ESC - CLOSE PANELS",
                     "",
-                    "IN 3RD PERSON MODE YOU CAN SEE YOUR",
-                    "CHARACTER MODEL AS YOU WALK AROUND",
-                    "THE CONTROL ROOM."
+                    ">E - OPEN MACHINES (CONTROL PANEL / ELENA /",
+                    ">    INDICATOR PANELS) WHEN STANDING NEAR THEM",
+                    ">T - TALK TO NPCS WHEN STANDING NEAR THEM",
+                    "",
+                    "+YOU CAN SEE PROMPTS ON SCREEN WHEN NEAR",
+                    "+AN INTERACTABLE OBJECT OR PERSON."
                 };
                 break;
             case 3:
-                title = "TALKING TO NPCS";
+                title = "YOUR CREW";
                 lines = new String[]{
-                    "THREE ENGINEERS WORK IN THE CONTROL ROOM:",
+                    "THREE ENGINEERS ARE IN THE CONTROL ROOM:",
                     "",
-                    "AKIMOV - SHIFT SUPERVISOR (HELPFUL GUIDE)",
-                    "TOPTUNOV - REACTOR OPERATOR (NERVOUS)",
-                    "DYATLOV - DEPUTY CHIEF ENGINEER (DEMANDING)",
+                    ">AKIMOV (SHIFT SUPERVISOR)",
+                    "+  YOUR ALLY. GIVES HELPFUL GUIDANCE AND WARNINGS.",
+                    "+  LISTEN TO HIM - HE KNOWS THE PROCEDURES.",
                     "",
-                    "APPROACH AN ENGINEER AND PRESS T TO TALK.",
-                    "THEY WILL GIVE YOU STORY HINTS AND INSTRUCTIONS.",
-                    "PRESS T OR ENTER TO ADVANCE DIALOGUE."
+                    ">TOPTUNOV (REACTOR OPERATOR)",
+                    "*  NERVOUS BUT KNOWLEDGEABLE. EXPLAINS TECHNICAL",
+                    "*  DETAILS ABOUT THE REACTOR AND EQUIPMENT.",
+                    "",
+                    ">DYATLOV (DEPUTY CHIEF ENGINEER)",
+                    "!  YOUR BOSS. DEMANDS THE TEST CONTINUES NO",
+                    "!  MATTER WHAT. HIS ORDERS MAY BE DANGEROUS."
                 };
                 break;
             case 4:
-                title = "CONTROL PANEL";
+                title = "THE CONTROL PANEL";
                 lines = new String[]{
-                    "WALK TO THE CONTROL PANEL AND PRESS E TO OPEN.",
+                    "PRESS E AT THE CONTROL PANEL TO OPEN IT.",
                     "",
-                    "HOVER OVER CONTROLS WITH YOUR MOUSE.",
-                    "LEFT-CLICK TO DECREASE OR TURN OFF.",
-                    "RIGHT-CLICK TO INCREASE OR TURN ON.",
+                    ">CONTROL RODS - INSERT (SAFER) / WITHDRAW (MORE POWER)",
+                    "!  BELOW 30 RODS = EXTREMELY DANGEROUS!",
+                    ">COOLANT FLOW - KEEPS THE CORE COOL",
+                    ">PUMPS ON/OFF - CIRCULATES COOLANT WATER",
+                    "!  TURNING OFF PUMPS CAUSES RAPID OVERHEATING!",
+                    ">TURBINE - CONNECT/DISCONNECT FOR THE TEST",
+                    ">ECCS - EMERGENCY CORE COOLING SYSTEM",
                     "",
-                    "CONTROLS: RODS / COOLANT / PUMPS / TURBINE",
-                    "THE AZ-5 EMERGENCY BUTTON APPEARS WHEN NEEDED.",
-                    "PRESS ESC OR RIGHT-CLICK TO CLOSE."
+                    "*LEFT-CLICK = DECREASE/OFF  RIGHT-CLICK = INCREASE/ON",
+                    "*OR USE ARROW KEYS TO ADJUST THE SELECTED CONTROL.",
+                    "+AZ-5 EMERGENCY BUTTON APPEARS WHEN THE STORY DEMANDS."
                 };
                 break;
             case 5:
-                title = "ELENA DISPLAY";
+                title = "ELENA CORE SCANNER";
                 lines = new String[]{
-                    "WALK TO THE ELENA DISPLAY AND PRESS E TO OPEN.",
+                    "PRESS E AT THE ELENA DISPLAY TO OPEN IT.",
+                    "ELENA MAPS NEUTRON FLUX ACROSS THE CORE.",
                     "",
-                    "ELENA MAPS THE REACTOR CORE. CLICK SECTORS TO SCAN.",
-                    "SCANNING DETECTS XENON HOT SPOTS (ORANGE) AND",
-                    "VOID COEFFICIENT ANOMALIES (PURPLE).",
+                    ">CLICK SECTORS ON THE CORE MAP TO SCAN THEM.",
+                    "+EACH SCAN IMPROVES STABILITY BY +0.5%.",
                     "",
-                    "EACH NEW SECTOR SCANNED BOOSTS STABILITY (+0.5%).",
-                    "FINDING 3+ HOT SPOTS GIVES AN EARLY WARNING.",
-                    "IF YOU NEGLECT SCANNING STABILITY DROPS FASTER!",
+                    "*ORANGE SECTORS = XENON HOT SPOTS (HIGH POISON)",
+                    "*  FINDING 3+ GIVES YOU AN EARLY WARNING!",
+                    "*PURPLE SECTORS = VOID ANOMALIES (DANGEROUS)",
+                    "*  APPEARS AFTER PHASE 5 - WARNS OF VOID DANGER.",
                     "",
-                    "MONITOR THE SCAN PROGRESS PANEL ON THE LEFT."
+                    "!IF YOU NEGLECT ELENA, STABILITY DROPS FASTER!",
+                    "+SCAN REGULARLY TO MAINTAIN YOUR BONUS."
+                };
+                break;
+            case 6:
+                title = "INDICATOR PANELS";
+                lines = new String[]{
+                    "PRESS E AT THE INDICATOR PANELS (RIGHT WALL).",
+                    "THESE SHOW INDEPENDENT INSTRUMENT READINGS.",
+                    "",
+                    "!INSTRUMENTS DRIFT OVER TIME - THE READINGS",
+                    "!SLOWLY BECOME INACCURATE AND UNRELIABLE!",
+                    "",
+                    ">LEFT-CLICK A GAUGE = CALIBRATE (FIXES DRIFT)",
+                    ">RIGHT-CLICK = ACKNOWLEDGE ACTIVE ALARMS",
+                    "+EACH CALIBRATION AND ALARM ACK BOOSTS STABILITY.",
+                    "",
+                    "*WATCH THE TREND ARROWS TO PREDICT PROBLEMS.",
+                    "*RISING FAST = DANGER AHEAD!",
+                    "!IGNORING INDICATORS FOR 60+ SEC = PENALTY!"
+                };
+                break;
+            case 7:
+                title = "STABILITY & DANGER";
+                lines = new String[]{
+                    "*STABILITY IS YOUR LIFELINE. IT STARTS AT 100%.",
+                    "",
+                    "!STABILITY DROPS WHEN:",
+                    "!  - CONTROL RODS BELOW 30 (MASSIVE PENALTY)",
+                    "!  - XENON LEVEL ABOVE 50%",
+                    "!  - COOLANT FLOW BELOW 50%",
+                    "!  - YOU NEGLECT ELENA OR INDICATOR PANELS",
+                    "",
+                    "+STABILITY INCREASES WHEN:",
+                    "+  - YOU SCAN SECTORS IN ELENA",
+                    "+  - YOU CALIBRATE INDICATOR GAUGES",
+                    "+  - YOU ACKNOWLEDGE ALARMS",
+                    "",
+                    "*WHEN AZ-5 IS PRESSED, STABILITY > 15% = YOU WIN!",
+                    "!STABILITY TOO LOW + AZ-5 = GRAPHITE TIP SURGE!"
                 };
                 break;
             default:
-                title = "YOUR MISSION";
+                title = "YOUR MISSION BEGINS";
                 lines = new String[]{
-                    "FOLLOW THE OBJECTIVES SHOWN AT THE TOP.",
+                    "THE STORY UNFOLDS IN PHASES:",
                     "",
-                    "PHASE 1: REDUCE REACTOR POWER USING CONTROL RODS",
-                    "PHASE 2: HANDLE THE XENON POISONING CRISIS",
-                    "PHASE 3: RAISE POWER AS DYATLOV DEMANDS",
-                    "PHASE 4: DISCONNECT THE TURBINE FOR THE TEST",
-                    "PHASE 5: PRESS THE AZ-5 EMERGENCY BUTTON",
+                    ">PHASE 1: REDUCE POWER (INSERT CONTROL RODS)",
+                    ">PHASE 2: VERIFY INDICATOR PANELS",
+                    ">PHASE 3: SCAN ELENA FOR XENON BUILDUP",
+                    ">PHASE 4: DEAL WITH XENON POISONING",
+                    ">PHASE 5: RAISE POWER (DYATLOV'S ORDER)",
+                    ">PHASE 6: DISCONNECT TURBINE FOR THE TEST",
+                    ">PHASE 7: PRESS AZ-5 WHEN THE TIME COMES",
                     "",
-                    "CLICK NEXT TO BEGIN THE SIMULATION..."
+                    "+TALK TO NPCS FOR HINTS. CHECK YOUR EQUIPMENT.",
+                    "*THE FATE OF CHERNOBYL IS IN YOUR HANDS.",
+                    "",
+                    "!CLICK START GAME TO BEGIN..."
                 };
                 break;
         }
@@ -1937,9 +2043,28 @@ public class ChernobylGameCore {
         // Render title
         drawHUDText(title, contentX, contentTopY, 3, 1f, 0.6f, 0.15f, 1f);
 
-        // Render lines
+        // Render lines with color coding based on prefix
         for (int i = 0; i < lines.length; i++) {
-            drawHUDText(lines[i], contentX, contentTopY - 40 - i * 26, 2, 0.8f, 0.8f, 0.75f, 1f);
+            String line = lines[i];
+            float lr = 0.8f, lg = 0.8f, lb = 0.75f, la = 1f; // default gray
+            if (line.startsWith("!")) {
+                // Red/warning
+                line = line.substring(1);
+                lr = 1f; lg = 0.35f; lb = 0.3f;
+            } else if (line.startsWith("+")) {
+                // Green/positive tip
+                line = line.substring(1);
+                lr = 0.3f; lg = 0.9f; lb = 0.4f;
+            } else if (line.startsWith("*")) {
+                // Orange/important
+                line = line.substring(1);
+                lr = 1f; lg = 0.7f; lb = 0.2f;
+            } else if (line.startsWith(">")) {
+                // Cyan/key binding
+                line = line.substring(1);
+                lr = 0.4f; lg = 0.8f; lb = 1f;
+            }
+            drawHUDText(line, contentX, contentTopY - 40 - i * 26, 2, lr, lg, lb, la);
         }
 
         // === NAVIGATION BUTTONS ===
@@ -1999,8 +2124,8 @@ public class ChernobylGameCore {
                 break;
             case 2:
                 storyTime = "25 APRIL 1986 - 23:40";
-                currentObjective = "GO TO INDICATOR PANELS (RIGHT WALL) - CLICK TO VERIFY READINGS";
-                showNotification("POWER REDUCED! WALK TO RIGHT WALL INDICATORS AND CLICK TO VERIFY!");
+                currentObjective = "OPEN INDICATOR PANELS (RIGHT WALL) - CALIBRATE GAUGES AND CHECK TRENDS";
+                showNotification("POWER REDUCED! WALK TO RIGHT WALL INDICATORS - PRESS E TO OPEN!");
                 break;
             case 3:
                 storyTime = "26 APRIL 1986 - 00:05";
@@ -2111,25 +2236,30 @@ public class ChernobylGameCore {
                     };
                 }
             case 2:
-                // NEW: Indicator verification phase
+                // Indicator verification phase
                 if (npcName.equals("Toptunov")) {
                     return new String[]{
                         "Good, the power is coming down.",
                         "",
-                        "Before we proceed, go check the",
-                        "INDICATOR PANELS on the RIGHT WALL.",
-                        "Press E when you are near them.",
+                        "Go check the INDICATOR PANELS on",
+                        "the RIGHT WALL. Press E to open.",
                         "",
-                        "We need to verify the readings",
-                        "match what the control panel shows.",
-                        "Standard safety procedure."
+                        "The instruments drift over time -",
+                        "LEFT-CLICK each gauge to calibrate.",
+                        "RIGHT-CLICK to acknowledge alarms.",
+                        "",
+                        "Watch the TREND ARROWS to see if",
+                        "values are rising or falling. If",
+                        "you ignore indicators too long,",
+                        "stability drops!"
                     };
                 } else if (npcName.equals("Akimov")) {
                     return new String[]{
                         "Check the indicator panels on the",
-                        "right wall. Press E to read them.",
-                        "We must verify reactor parameters",
-                        "before continuing the test."
+                        "right wall. Press E to open them.",
+                        "Calibrate the gauges by clicking",
+                        "and acknowledge any alarms.",
+                        "Keep checking them regularly!"
                     };
                 } else {
                     return new String[]{
@@ -2611,6 +2741,8 @@ public class ChernobylGameCore {
                 renderControlPanelUI(screenW, screenH);
             } else if (activeMachine.equals("ELENA")) {
                 renderElenaDisplayUI(screenW, screenH);
+            } else if (activeMachine.equals("INDICATOR_PANEL")) {
+                renderIndicatorPanelUI(screenW, screenH);
             }
             // Restore state
             glEnable(GL_DEPTH_TEST);
@@ -2885,7 +3017,59 @@ public class ChernobylGameCore {
         if (coolantFlow < 50) reactorStability -= (50 - coolantFlow) * 0.8f;
         reactorStability += elenaScanStabilityBonus;  // Reward for ELENA scanning
         reactorStability -= elenaScanNeglectPenalty;   // Penalty for ignoring ELENA
+        reactorStability += indicatorCheckBonus;        // Reward for indicator monitoring
+        reactorStability -= indicatorNeglectPenalty;    // Penalty for ignoring indicators
         reactorStability = Math.max(0f, Math.min(100f, reactorStability));
+
+        // === INDICATOR PANEL: Drift simulation ===
+        // Instrument drift grows randomly; faster when reactor is unstable
+        float driftRate = 0.02f + (100f - reactorStability) * 0.003f; // More unstable = more drift
+        indicatorDriftPower += (indicatorRng.nextFloat() - 0.5f) * driftRate * reactorPower * 0.01f;
+        indicatorDriftTemp += (indicatorRng.nextFloat() - 0.5f) * driftRate * reactorTemperature * 0.008f;
+        indicatorDriftPressure += (indicatorRng.nextFloat() - 0.5f) * driftRate * reactorPressure * 0.008f;
+        indicatorDriftFlux += (indicatorRng.nextFloat() - 0.5f) * driftRate * neutronFlux * 0.01f;
+        indicatorDriftXenon += (indicatorRng.nextFloat() - 0.5f) * driftRate * 0.3f;
+        indicatorDriftCoolant += (indicatorRng.nextFloat() - 0.5f) * driftRate * 0.4f;
+        // Clamp drift to reasonable bounds (max ~15% of value)
+        float maxPDrift = Math.max(20f, reactorPower * 0.15f);
+        indicatorDriftPower = Math.max(-maxPDrift, Math.min(maxPDrift, indicatorDriftPower));
+        float maxTDrift = Math.max(5f, reactorTemperature * 0.12f);
+        indicatorDriftTemp = Math.max(-maxTDrift, Math.min(maxTDrift, indicatorDriftTemp));
+        float maxPrDrift = Math.max(3f, reactorPressure * 0.1f);
+        indicatorDriftPressure = Math.max(-maxPrDrift, Math.min(maxPrDrift, indicatorDriftPressure));
+        indicatorDriftFlux = Math.max(-15f, Math.min(15f, indicatorDriftFlux));
+        indicatorDriftXenon = Math.max(-5f, Math.min(5f, indicatorDriftXenon));
+        indicatorDriftCoolant = Math.max(-8f, Math.min(8f, indicatorDriftCoolant));
+
+        // === INDICATOR PANEL: Parameter history for trends ===
+        paramHistoryTimer += 0.1f; // Each sim tick = 0.1s
+        if (paramHistoryTimer >= 2.0f) { // Record every 2 seconds
+            paramHistoryTimer = 0f;
+            powerHistory[paramHistoryIdx] = reactorPower;
+            tempHistory[paramHistoryIdx] = reactorTemperature;
+            pressureHistory[paramHistoryIdx] = reactorPressure;
+            paramHistoryIdx = (paramHistoryIdx + 1) % powerHistory.length;
+        }
+
+        // === INDICATOR PANEL: Alarm detection ===
+        indicatorAlarmActive[0] = reactorPower > 2500f || reactorPower < 100f;     // Power alarm
+        indicatorAlarmActive[1] = reactorTemperature > 400f;                        // Temperature alarm
+        indicatorAlarmActive[2] = reactorPressure > 90f;                           // Pressure alarm
+        indicatorAlarmActive[3] = neutronFlux > 140f;                              // Flux alarm
+        indicatorAlarmActive[4] = coolantFlow < 60f;                               // Coolant alarm
+        indicatorAlarmActive[5] = controlRodsInserted < 30;                        // Rod safety alarm
+        // Clear acknowledged status when alarm deactivates
+        for (int i = 0; i < 6; i++) {
+            if (!indicatorAlarmActive[i]) indicatorAlarmAcknowledged[i] = false;
+        }
+
+        // === INDICATOR PANEL: Neglect timer ===
+        indicatorCheckTimer += 0.1f; // Each sim tick ~0.1s
+        if (indicatorCheckTimer > 60f) { // After 60s without checking
+            indicatorNeglectPenalty = Math.min(10f, (indicatorCheckTimer - 60f) * 0.05f);
+        } else {
+            indicatorNeglectPenalty = Math.max(0f, indicatorNeglectPenalty - 0.01f);
+        }
 
         // Story progression triggers from machine interaction
         phaseTimer += dt;
@@ -3319,6 +3503,68 @@ public class ChernobylGameCore {
                 } else { spaceKeyPressed = false; }
             }
 
+            // === INDICATOR PANEL MOUSE CONTROLS ===
+            if (activeMachine.equals("INDICATOR_PANEL")) {
+                float iPanelW = screenW * 0.88f;
+                float iPanelH = screenH * 0.88f;
+                float iPanelX = (screenW - iPanelW) / 2;
+                float iPanelY = (screenH - iPanelH) / 2;
+                float iContentY = iPanelY + iPanelH - 60;
+
+                // Gauge layout: 3 columns x 2 rows
+                float gaugeW = (iPanelW - 80) / 3;
+                float gaugeH = (iPanelH - 200) / 2 - 20;
+                float gaugeStartX = iPanelX + 20;
+                float gaugeStartY = iContentY - 10;
+
+                // Detect hover over gauge areas
+                indicatorHoveredGauge = -1;
+                for (int row = 0; row < 2; row++) {
+                    for (int col = 0; col < 3; col++) {
+                        int idx = row * 3 + col;
+                        float gx = gaugeStartX + col * (gaugeW + 15);
+                        float gy = gaugeStartY - row * (gaugeH + 15) - gaugeH;
+                        if (machineMouseX >= gx && machineMouseX <= gx + gaugeW &&
+                            machineMouseY >= gy && machineMouseY <= gy + gaugeH) {
+                            indicatorHoveredGauge = idx;
+                        }
+                    }
+                }
+
+                // Left-click on gauge = CALIBRATE that instrument
+                if (mouseLeftClicked && indicatorHoveredGauge >= 0) {
+                    switch (indicatorHoveredGauge) {
+                        case 0: indicatorDriftPower = 0f; break;
+                        case 1: indicatorDriftTemp = 0f; break;
+                        case 2: indicatorDriftPressure = 0f; break;
+                        case 3: indicatorDriftFlux = 0f; break;
+                        case 4: indicatorDriftXenon = 0f; break;
+                        case 5: indicatorDriftCoolant = 0f; break;
+                    }
+                    indicatorCalibrationsDone++;
+                    indicatorCheckBonus = Math.min(10f, indicatorCalibrationsDone * 0.5f + indicatorAlarmsAcked * 1.0f);
+                    showMachineLog("INSTRUMENT CALIBRATED - DRIFT CORRECTED");
+                }
+
+                // Right-click = ACKNOWLEDGE alarms (any active alarm)
+                if (mouseRightClicked) {
+                    boolean anyAcked = false;
+                    for (int i = 0; i < 6; i++) {
+                        if (indicatorAlarmActive[i] && !indicatorAlarmAcknowledged[i]) {
+                            indicatorAlarmAcknowledged[i] = true;
+                            indicatorAlarmsAcked++;
+                            anyAcked = true;
+                        }
+                    }
+                    if (anyAcked) {
+                        indicatorCheckBonus = Math.min(10f, indicatorCalibrationsDone * 0.5f + indicatorAlarmsAcked * 1.0f);
+                        showMachineLog("ALARMS ACKNOWLEDGED - OPERATOR AWARE");
+                    } else {
+                        showMachineLog("NO ACTIVE UNACKNOWLEDGED ALARMS");
+                    }
+                }
+            }
+
             return; // Don't check proximity while UI is open
         }
 
@@ -3349,16 +3595,15 @@ public class ChernobylGameCore {
             if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
                 if (!xKeyPressed) {
                     xKeyPressed = true;
+                    machineUIActive = true;
+                    activeMachine = nearbyMachine;
                     if (nearbyMachine.equals("INDICATOR_PANEL")) {
-                        // Indicator panel is read-only — show info and set flag
                         playerReadIndicators = true;
-                        showNotification("INDICATOR READS: POWER=" + String.format("%.0f", reactorPower) + "MW  TEMP=" + String.format("%.0f", reactorTemperature) + "C  RODS=" + controlRodsInserted + "/211  STABILITY=" + String.format("%.0f", reactorStability) + "%");
-                        showMachineLog("INDICATOR PANELS READ");
-                    } else {
-                        machineUIActive = true;
-                        activeMachine = nearbyMachine;
-                        if (elenaSelectedSector < 0) elenaSelectedSector = 9 * 18 + 9; // center
+                        indicatorCheckTimer = 0f; // Reset neglect timer
+                        indicatorHoveredGauge = -1;
+                        showMachineLog("INDICATOR PANELS OPENED - CHECK READINGS");
                     }
+                    if (elenaSelectedSector < 0) elenaSelectedSector = 9 * 18 + 9; // center
                 }
             } else {
                 xKeyPressed = false;
@@ -3721,6 +3966,230 @@ public class ChernobylGameCore {
             msgs.add(0, "ALL SYSTEMS NOMINAL");
 
         return msgs.toArray(new String[0]);
+    }
+
+    private void renderIndicatorPanelUI(float screenW, float screenH) {
+        // Full-screen semi-transparent overlay
+        drawHUDRect(0, 0, screenW, screenH, 0f, 0f, 0f, 0.45f);
+
+        // Main panel frame
+        float panelW = screenW * 0.90f;
+        float panelH = screenH * 0.90f;
+        float panelX = (screenW - panelW) / 2;
+        float panelY = (screenH - panelH) / 2;
+
+        // Dark panel background
+        drawHUDRect(panelX, panelY, panelW, panelH, 0.06f, 0.08f, 0.12f, 0.97f);
+        // Border (blue-tinted for instrument panel)
+        drawHUDRect(panelX, panelY + panelH - 3, panelW, 3, 0.2f, 0.4f, 0.7f, 1f);
+        drawHUDRect(panelX, panelY, panelW, 3, 0.2f, 0.4f, 0.7f, 1f);
+        drawHUDRect(panelX, panelY, 3, panelH, 0.2f, 0.4f, 0.7f, 1f);
+        drawHUDRect(panelX + panelW - 3, panelY, 3, panelH, 0.2f, 0.4f, 0.7f, 1f);
+
+        // Title bar
+        drawHUDRect(panelX + 3, panelY + panelH - 42, panelW - 6, 39, 0.08f, 0.12f, 0.2f, 1f);
+        drawHUDText("RBMK-1000 INDEPENDENT INSTRUMENT PANEL - UNIT 4", panelX + 20, panelY + panelH - 30, 2, 0.4f, 0.7f, 1f, 1f);
+
+        // Alarm status summary on title bar
+        int activeAlarms = 0;
+        int unackedAlarms = 0;
+        for (int i = 0; i < 6; i++) {
+            if (indicatorAlarmActive[i]) { activeAlarms++; if (!indicatorAlarmAcknowledged[i]) unackedAlarms++; }
+        }
+        String alarmSummary = unackedAlarms > 0 ? "!! " + unackedAlarms + " UNACKED ALARMS !!" :
+                              activeAlarms > 0 ? activeAlarms + " ALARMS (ACKED)" : "ALL PARAMETERS NOMINAL";
+        float aR = unackedAlarms > 0 ? 1f : (activeAlarms > 0 ? 1f : 0.3f);
+        float aG = unackedAlarms > 0 ? 0.2f : (activeAlarms > 0 ? 0.8f : 1f);
+        float aB = unackedAlarms > 0 ? 0.2f : (activeAlarms > 0 ? 0f : 0.3f);
+        if (unackedAlarms > 0) {
+            float flash = (float)(Math.sin(System.currentTimeMillis() * 0.008) * 0.3 + 0.7);
+            aR *= flash; aG *= flash;
+        }
+        drawHUDText(alarmSummary, panelX + panelW - alarmSummary.length() * 10 - 25, panelY + panelH - 30, 2, aR, aG, aB, 1f);
+
+        float contentY = panelY + panelH - 55;
+
+        // === INSTRUMENT GAUGES: 3 columns x 2 rows ===
+        float gaugeW = (panelW - 80) / 3;
+        float gaugeH = (panelH - 200) / 2 - 20;
+        float gStartX = panelX + 20;
+        float gStartY = contentY - 10;
+
+        // Gauge data
+        String[] gaugeNames = {"THERMAL POWER", "CORE TEMPERATURE", "PRESSURE", "NEUTRON FLUX", "XENON-135 LEVEL", "COOLANT FLOW"};
+        String[] gaugeUnits = {"MW", "C", "ATM", "%", "%", "%"};
+        float[] trueValues = {reactorPower, reactorTemperature, reactorPressure, neutronFlux, xenonLevel, coolantFlow};
+        float[] driftValues = {indicatorDriftPower, indicatorDriftTemp, indicatorDriftPressure, indicatorDriftFlux, indicatorDriftXenon, indicatorDriftCoolant};
+        float[] maxValues = {4000f, 800f, 150f, 250f, 100f, 100f};
+        // Safe ranges: min, max (for bar coloring)
+        float[][] safeRanges = {{100f, 2500f}, {150f, 400f}, {20f, 90f}, {5f, 140f}, {0f, 60f}, {60f, 100f}};
+
+        for (int row = 0; row < 2; row++) {
+            for (int col = 0; col < 3; col++) {
+                int idx = row * 3 + col;
+                float gx = gStartX + col * (gaugeW + 15);
+                float gy = gStartY - row * (gaugeH + 15) - gaugeH;
+
+                boolean hovered = (indicatorHoveredGauge == idx);
+                boolean hasAlarm = indicatorAlarmActive[idx];
+                boolean alarmAcked = indicatorAlarmAcknowledged[idx];
+
+                // Gauge background
+                float bgR = 0.07f, bgG = 0.09f, bgB = 0.14f;
+                if (hovered) { bgR = 0.1f; bgG = 0.14f; bgB = 0.2f; }
+                if (hasAlarm && !alarmAcked) {
+                    float flash = (float)(Math.sin(System.currentTimeMillis() * 0.006 + idx) * 0.15 + 0.15);
+                    bgR += flash; bgG += flash * 0.2f;
+                }
+                drawHUDRect(gx, gy, gaugeW, gaugeH, bgR, bgG, bgB, 1f);
+                // Border
+                float bR = hasAlarm ? (alarmAcked ? 1f : 1f) : 0.2f;
+                float bG = hasAlarm ? (alarmAcked ? 0.6f : 0.15f) : 0.35f;
+                float bB = hasAlarm ? 0f : 0.6f;
+                drawHUDRect(gx, gy + gaugeH - 2, gaugeW, 2, bR, bG, bB, 1f);
+                drawHUDRect(gx, gy, gaugeW, 2, bR, bG, bB, 0.6f);
+
+                // Alarm indicator light (top-right corner)
+                if (hasAlarm) {
+                    float lightFlash = alarmAcked ? 0.6f : (float)(Math.sin(System.currentTimeMillis() * 0.01 + idx) * 0.5 + 0.5);
+                    drawHUDRect(gx + gaugeW - 22, gy + gaugeH - 25, 16, 16,
+                        alarmAcked ? 1f : 1f, alarmAcked ? 0.6f : 0.1f, 0f, lightFlash);
+                } else {
+                    drawHUDRect(gx + gaugeW - 22, gy + gaugeH - 25, 16, 16, 0.1f, 0.4f, 0.1f, 0.7f);
+                }
+
+                // Gauge label
+                drawHUDText(gaugeNames[idx], gx + 10, gy + gaugeH - 20, 2, 0.5f, 0.65f, 0.9f, 1f);
+
+                // Displayed value (with drift applied)
+                float displayedValue = Math.max(0f, trueValues[idx] + driftValues[idx]);
+                String valueStr = String.format("%.1f", displayedValue);
+                // Value color based on safety range
+                boolean inDanger = displayedValue < safeRanges[idx][0] || displayedValue > safeRanges[idx][1];
+                // Special case: for coolant, below is danger, for xenon below is fine
+                float vR = inDanger ? 1f : 0.2f;
+                float vG = inDanger ? 0.3f : 0.9f;
+                float vB = inDanger ? 0.2f : 0.4f;
+                drawHUDText(valueStr, gx + 12, gy + gaugeH - 50, 3, vR, vG, vB, 1f);
+                drawHUDText(gaugeUnits[idx], gx + 12 + valueStr.length() * 15 + 5, gy + gaugeH - 45, 2, 0.4f, 0.55f, 0.7f, 1f);
+
+                // Drift indicator (how far off from true value)
+                float driftPct = trueValues[idx] > 0.1f ? Math.abs(driftValues[idx]) / trueValues[idx] * 100f : Math.abs(driftValues[idx]);
+                String driftStr = String.format("DRIFT: %.1f%%", driftPct);
+                float dR = driftPct > 10f ? 1f : (driftPct > 5f ? 1f : 0.3f);
+                float dG = driftPct > 10f ? 0.3f : (driftPct > 5f ? 0.7f : 0.7f);
+                float dB = driftPct > 10f ? 0.3f : (driftPct > 5f ? 0f : 0.3f);
+                drawHUDText(driftStr, gx + gaugeW - driftStr.length() * 10 - 8, gy + gaugeH - 50, 2, dR, dG, dB, 0.9f);
+
+                // === Trend arrow ===
+                float trend = computeParamTrend(idx);
+                String trendStr;
+                float tR, tG, tB;
+                if (trend > 5f) { trendStr = "^^ RISING FAST"; tR = 1f; tG = 0.3f; tB = 0.3f; }
+                else if (trend > 1f) { trendStr = "^ RISING"; tR = 1f; tG = 0.7f; tB = 0.2f; }
+                else if (trend < -5f) { trendStr = "vv FALLING FAST"; tR = 0.3f; tG = 0.5f; tB = 1f; }
+                else if (trend < -1f) { trendStr = "v FALLING"; tR = 0.4f; tG = 0.7f; tB = 1f; }
+                else { trendStr = "-- STABLE"; tR = 0.4f; tG = 0.8f; tB = 0.4f; }
+                // Special: for coolant, falling is bad, rising is good
+                if (idx == 5 && trend < -1f) { tR = 1f; tG = 0.3f; tB = 0.3f; }
+                if (idx == 5 && trend > 1f) { tR = 0.3f; tG = 0.8f; tB = 0.3f; }
+                drawHUDText(trendStr, gx + 12, gy + gaugeH - 75, 2, tR, tG, tB, 1f);
+
+                // === Bar gauge ===
+                float barX = gx + 10;
+                float barY = gy + 12;
+                float barW = gaugeW - 20;
+                float barH = 22;
+                drawHUDRect(barX, barY, barW, barH, 0.1f, 0.12f, 0.18f, 1f);
+                // Safe zone marking (green band)
+                float safeStartPct = safeRanges[idx][0] / maxValues[idx];
+                float safeEndPct = safeRanges[idx][1] / maxValues[idx];
+                drawHUDRect(barX + barW * safeStartPct, barY, barW * (safeEndPct - safeStartPct), barH, 0.05f, 0.15f, 0.05f, 0.5f);
+                // Current value marker
+                float valPct = Math.min(1f, Math.max(0f, displayedValue / maxValues[idx]));
+                float markerX = barX + barW * valPct;
+                drawHUDRect(markerX - 2, barY - 2, 5, barH + 4, vR, vG, vB, 1f);
+
+                // Hover instruction
+                if (hovered) {
+                    drawHUDRect(gx + 5, gy + gaugeH - 95, gaugeW - 10, 18, 0.15f, 0.2f, 0.3f, 0.8f);
+                    drawHUDText("CLICK TO CALIBRATE", gx + 12, gy + gaugeH - 92, 2, 0.6f, 0.9f, 1f, 1f);
+                }
+            }
+        }
+
+        // === BOTTOM STATUS BAR ===
+        float statusBarY = panelY + 8;
+        float statusBarH = 55;
+        drawHUDRect(panelX + 3, statusBarY, panelW - 6, statusBarH, 0.05f, 0.07f, 0.12f, 1f);
+        drawHUDRect(panelX + 3, statusBarY + statusBarH - 1, panelW - 6, 1, 0.2f, 0.3f, 0.5f, 0.6f);
+
+        // Left: Instrument accuracy
+        float totalDrift = Math.abs(indicatorDriftPower / Math.max(1f, reactorPower)) +
+                           Math.abs(indicatorDriftTemp / Math.max(1f, reactorTemperature)) +
+                           Math.abs(indicatorDriftPressure / Math.max(1f, reactorPressure)) +
+                           Math.abs(indicatorDriftFlux / Math.max(1f, neutronFlux)) +
+                           Math.abs(indicatorDriftXenon / Math.max(1f, xenonLevel + 1f)) +
+                           Math.abs(indicatorDriftCoolant / Math.max(1f, coolantFlow + 1f));
+        float accuracy = Math.max(0f, 100f - totalDrift * 100f / 6f);
+        String accStr = "INSTRUMENT ACCURACY: " + String.format("%.0f", accuracy) + "%";
+        float accR = accuracy < 70f ? 1f : (accuracy < 85f ? 1f : 0.3f);
+        float accG = accuracy < 70f ? 0.3f : (accuracy < 85f ? 0.8f : 0.9f);
+        drawHUDText(accStr, panelX + 20, statusBarY + 32, 2, accR, accG, 0.2f, 1f);
+
+        // Middle: Calibrations & acknowledged alarms count
+        String calStr = "CALIBRATIONS: " + indicatorCalibrationsDone + "  ALARMS ACKED: " + indicatorAlarmsAcked;
+        drawHUDText(calStr, panelX + 20, statusBarY + 12, 2, 0.4f, 0.6f, 0.8f, 0.9f);
+
+        // Right: Stability bonus/penalty
+        String bonusStr = "STABILITY EFFECT: ";
+        float netEffect = indicatorCheckBonus - indicatorNeglectPenalty;
+        if (netEffect >= 0) bonusStr += "+" + String.format("%.1f", netEffect) + "%";
+        else bonusStr += String.format("%.1f", netEffect) + "%";
+        float bR = netEffect < 0 ? 1f : 0.2f;
+        float bG2 = netEffect < 0 ? 0.3f : 0.9f;
+        drawHUDText(bonusStr, panelX + panelW - bonusStr.length() * 10 - 25, statusBarY + 32, 2, bR, bG2, 0.3f, 1f);
+
+        // Next check reminder
+        float timeToNeglect = Math.max(0f, 60f - indicatorCheckTimer);
+        String checkStr = timeToNeglect > 0 ? "NEXT CHECK IN: " + String.format("%.0f", timeToNeglect) + "s" : "!! OVERDUE - CHECK INSTRUMENTS !!";
+        float cR = timeToNeglect > 20f ? 0.3f : (timeToNeglect > 0f ? 1f : 1f);
+        float cG = timeToNeglect > 20f ? 0.7f : (timeToNeglect > 0f ? 0.7f : 0.2f);
+        drawHUDText(checkStr, panelX + panelW - checkStr.length() * 10 - 25, statusBarY + 12, 2, cR, cG, 0.2f, 0.9f);
+
+        // === INSTRUCTIONS ===
+        drawHUDText("LEFT-CLICK GAUGE: CALIBRATE INSTRUMENT  |  RIGHT-CLICK: ACKNOWLEDGE ALARMS  |  ESC: CLOSE", panelX + 20, panelY - 18, 2, 0.4f, 0.5f, 0.7f, 0.7f);
+
+        // Machine log message
+        if (machineLogTimer > 0 && !machineLogMessage.isEmpty()) {
+            float logW = machineLogMessage.length() * 10 + 30;
+            float logX = panelX + (panelW - logW) / 2;
+            float logAlpha = Math.min(1f, machineLogTimer);
+            drawHUDRect(logX, statusBarY + statusBarH + 5, logW, 28, 0.1f, 0.15f, 0.25f, logAlpha * 0.9f);
+            drawHUDText(machineLogMessage, logX + 15, statusBarY + statusBarH + 11, 2, 0.4f, 0.75f, 1f, logAlpha);
+        }
+    }
+
+    // Compute parameter trend from history (returns rate of change per sample)
+    private float computeParamTrend(int paramIdx) {
+        float[] history;
+        float currentVal;
+        switch (paramIdx) {
+            case 0: history = powerHistory; currentVal = reactorPower; break;
+            case 1: history = tempHistory; currentVal = reactorTemperature; break;
+            case 2: history = pressureHistory; currentVal = reactorPressure; break;
+            default: return 0f; // flux, xenon, coolant don't have separate history arrays
+        }
+        // Compare current value to average of last few recordings
+        float sum = 0f;
+        int count = 0;
+        for (int i = 0; i < history.length; i++) {
+            if (history[i] > 0.01f) { sum += history[i]; count++; }
+        }
+        if (count < 3) return 0f; // Not enough data yet
+        float avg = sum / count;
+        if (avg < 0.01f) return 0f;
+        return ((currentVal - avg) / avg) * 100f; // % change from average
     }
 
     private void renderElenaDisplayUI(float screenW, float screenH) {
