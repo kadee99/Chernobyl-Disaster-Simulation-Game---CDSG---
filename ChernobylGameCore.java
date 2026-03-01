@@ -120,16 +120,28 @@ public class ChernobylGameCore {
     private static final float ROOM_FLOOR = 20f;               // Minimum Y (above floor)
     private static final float ROOM_CEILING = 6 * BLOCK_SIZE - 20f; // Maximum Y (below ceiling)
 
-    // === REACTOR HALL (Room 2) ===
-    // The corridor exits the front wall (-Z) at x=0 and goes further -Z
-    private static final float CORRIDOR_START_Z = -12 * BLOCK_SIZE;  // Front wall Z
-    private static final float CORRIDOR_END_Z = -18 * BLOCK_SIZE;    // Where corridor meets reactor hall
+    // === CORRIDOR TO REACTOR HALL ===
+    // Long corridor: straight -Z from door → stairs down → turn left → left arm →
+    // connecting walkway +Z → into reactor hall
+    private static final float CORRIDOR_START_Z = -12 * BLOCK_SIZE;  // Front wall Z (door)
+    private static final float CORRIDOR_STRAIGHT_END_Z = -34 * BLOCK_SIZE; // End of flat straight section
     private static final float CORRIDOR_HALF_WIDTH = 2 * BLOCK_SIZE; // Corridor is 4 blocks wide
-    private static final float REACTOR_HALL_MIN_X = -10 * BLOCK_SIZE; // Reactor hall X bounds
-    private static final float REACTOR_HALL_MAX_X = 10 * BLOCK_SIZE;
-    private static final float REACTOR_HALL_MIN_Z = -18 * BLOCK_SIZE; // Where corridor ends
-    private static final float REACTOR_HALL_MAX_Z = -30 * BLOCK_SIZE; // Far end of reactor hall
-    private static final int REACTOR_HALL_HEIGHT = 8; // Taller ceiling
+    private static final int CORRIDOR_WALL_H = 4; // Corridor wall height in blocks
+    // Stairs section: z from -34 to -42, descending from y=0 to y=-180
+    private static final float STAIR_START_Z = -34 * BLOCK_SIZE;
+    private static final float STAIR_END_Z = -42 * BLOCK_SIZE;
+    // Turn/landing section: z = -42 to -46, at bottom level (y=-180)
+    private static final float CORRIDOR_TURN_Z_MIN = -46 * BLOCK_SIZE;
+    private static final float CORRIDOR_TURN_Z_MAX = -42 * BLOCK_SIZE;
+    // Left arm going -X at z=-42 to z=-46, from x=+2 to x=-18
+    private static final float CORRIDOR_LEFT_ARM_START_X = 2 * BLOCK_SIZE;
+    private static final float CORRIDOR_LEFT_ARM_END_X = -18 * BLOCK_SIZE;
+    // Connecting walkway: x=-18 to -20, z from -42 to -12 (enters reactor hall)
+    private static final float WALKWAY_X_MIN = -20 * BLOCK_SIZE;
+    private static final float WALKWAY_X_MAX = -18 * BLOCK_SIZE;
+    private static final float WALKWAY_Z_START = -42 * BLOCK_SIZE;
+    private static final float WALKWAY_Z_END = -12 * BLOCK_SIZE; // Meets reactor hall side wall
+    private static final float REACTOR_HALL_FLOOR_Y = -180f; // Existing reactor hall floor
     private boolean reactorHallDoorOpen = false;       // Door state
 
     // === STORY SYSTEM ===
@@ -1375,6 +1387,7 @@ public class ChernobylGameCore {
         coolantPumpsOn = true;
         turbineConnected = true;
         emergencyCoolingOn = true;
+        reactorHallDoorOpen = false;
     }
 
     private void renderEndingScreen() {
@@ -2209,6 +2222,19 @@ public class ChernobylGameCore {
                         "Go speak with Akimov. He will brief",
                         "you. Do not waste my time."
                     };
+                } else if (npcName.equals("Perevozchenko")) {
+                    return new String[]{
+                        "Comrade, I am Valery Perevozchenko,",
+                        "reactor section foreman.",
+                        "",
+                        "I oversee the reactor hall - the room",
+                        "with the fuel channels. If you need",
+                        "anything about the reactor itself,",
+                        "come find me in hall 2.",
+                        "",
+                        "But first, speak with Akimov.",
+                        "He is expecting you."
+                    };
                 } else {
                     return new String[]{
                         "Not now, comrade. Akimov wants to",
@@ -2447,6 +2473,22 @@ public class ChernobylGameCore {
                         "Any more delays and I will have you",
                         "all replaced. Understood?"
                     };
+                } else if (npcName.equals("Perevozchenko")) {
+                    return new String[]{
+                        "COMRADE! You have to listen to me!",
+                        "",
+                        "I was just in the reactor hall -",
+                        "the fuel channel CAPS! They were",
+                        "JUMPING! Bouncing on and off like",
+                        "something is pushing them from below!",
+                        "",
+                        "I have NEVER seen anything like it!",
+                        "The reactor is doing something it",
+                        "should not be doing!",
+                        "",
+                        "For God's sake, press AZ-5! SHUT",
+                        "IT DOWN BEFORE IT IS TOO LATE!"
+                    };
                 } else {
                     return new String[]{
                         "Something is wrong! The readings",
@@ -2484,6 +2526,23 @@ public class ChernobylGameCore {
                         "",
                         "Go to the roof and assess the",
                         "damage. That is an order."
+                    };
+                } else if (npcName.equals("Perevozchenko")) {
+                    return new String[]{
+                        "The reactor hall... it is GONE.",
+                        "The upper biological shield -",
+                        "Elena - it flipped over completely.",
+                        "",
+                        "I saw the fuel channels flying",
+                        "through the air like matchsticks.",
+                        "The graphite... it is everywhere.",
+                        "",
+                        "Khodemchuk... Khodemchuk was in",
+                        "the pump room. I cannot find him.",
+                        "I have to go back. I have to try.",
+                        "",
+                        "The radiation... I can taste metal",
+                        "in my mouth. My skin is burning."
                     };
                 } else {
                     return new String[]{
@@ -6501,8 +6560,12 @@ public class ChernobylGameCore {
         // Side walls only
         for (int x = 0; x < hallWidth; x++) {
             for (int h = 0; h < hallHeight; h++) {
-                addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                // -Z side wall: leave doorway opening for walkway at x=1,2,3 (positions -18,-19,-20 BS)
+                boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < 3);
+                if (!isWalkwayDoor) {
+                    addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
                 addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
             }
@@ -6528,200 +6591,200 @@ public class ChernobylGameCore {
 
     private void buildCorridorAndReactorHall() {
         // =========================================================
-        // CORRIDOR: From control room front wall (-12*BS) to -18*BS
-        // Then REACTOR HALL: Large room from z = -18*BS to -30*BS
-        // All at same floor level as control room (y=0)
+        // LONG CORRIDOR from control room door DOWN to the EXISTING
+        // reactor hall visible through the glass window.
+        //
+        // Layout:
+        //   1) STRAIGHT section: z = -12 to -34 (22 blocks, flat, ~5.5s)
+        //   2) STAIRS section: z = -34 to -42 (8 blocks, descending y=0 to y=-180)
+        //   3) BOTTOM LANDING: z = -42 to -44 (flat at y=-180)
+        //   4) TURN LEFT: corridor turns -X at bottom level
+        //   5) LEFT ARM: x from +2 to -17 (19 blocks at y=-180, ~4.5s)
+        //      running at z=-42 to z=-46, enters reactor hall through
+        //      an extended walkway on the -Z side
+        //
+        // Total run: ~10-12 seconds
         // =========================================================
 
-        int corridorWidth = 2; // half-width in blocks (4 blocks total)
-        int corridorWallH = 4; // shorter than control room
-        float corridorFloorZ = -12; // starts after front wall (in block units)
-        float corridorEndZ = -18;   // ends where reactor hall begins
+        int cw = 2; // corridor half-width in blocks
+        int wallH = CORRIDOR_WALL_H;
+        float hallFloorY = REACTOR_HALL_FLOOR_Y; // -180
 
-        // === CORRIDOR FLOOR ===
-        for (int x = -corridorWidth; x <= corridorWidth; x++) {
-            for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
-                String texture = ((x + z) % 2 == 0) ? "gray_concrete" : "light_gray_concrete";
-                addTexturedCube(x * BLOCK_SIZE, 0, z * BLOCK_SIZE, BLOCK_SIZE, 10, BLOCK_SIZE, texture);
+        // ============================================================
+        // SECTION 1: STRAIGHT CORRIDOR (z = -12 to -34, flat at y=0)
+        // ============================================================
+        for (int z = -12; z >= -34; z--) {
+            for (int x = -cw; x <= cw; x++) {
+                String tex = ((x + z) % 2 == 0) ? "gray_concrete" : "light_gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, 0, z * BLOCK_SIZE, BLOCK_SIZE, 10, BLOCK_SIZE, tex);
+            }
+            // Left wall
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube((-cw - 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+            // Right wall
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube((cw + 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+            // Ceiling
+            for (int x = -cw; x <= cw; x++) {
+                boolean isLight = (z % 4 == 0) && (x == 0);
+                String tex = isLight ? "fluorescent_light" : "gray_concrete";
+                addTexturedCube(x * BLOCK_SIZE, wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, tex);
             }
         }
 
-        // === CORRIDOR WALLS (left and right) ===
-        for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
-            for (int h = 0; h < corridorWallH; h++) {
-                // Left corridor wall
-                addTexturedCube((-corridorWidth - 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
-                // Right corridor wall
-                addTexturedCube((corridorWidth + 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
-            }
-        }
+        // Pipes along straight corridor ceiling
+        addTexturedCube(-cw * BLOCK_SIZE + BLOCK_SIZE * 0.3f,
+               (wallH - 0.5f) * BLOCK_SIZE, -23 * BLOCK_SIZE,
+               BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.15f, 11 * BLOCK_SIZE, "iron_block");
+        addTexturedCube(cw * BLOCK_SIZE - BLOCK_SIZE * 0.3f,
+               (wallH - 0.5f) * BLOCK_SIZE, -23 * BLOCK_SIZE,
+               BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.15f, 11 * BLOCK_SIZE, "iron_block");
 
-        // === CORRIDOR CEILING ===
-        for (int x = -corridorWidth; x <= corridorWidth; x++) {
-            for (int z = (int)corridorFloorZ; z >= (int)corridorEndZ; z--) {
+
+
+        // ============================================================
+        // SECTION 2: STAIRS (z = -34 to -42, descending from y=0 to y=-180)
+        // ============================================================
+        float stepDrop = Math.abs(hallFloorY) / 8.0f; // 22.5 per step
+        for (int z = -34; z >= -42; z--) {
+            float t = (float)(z - (-34)) / (float)(-42 - (-34)); // 0 at z=-34, 1 at z=-42
+            float floorY = t * hallFloorY; // 0 to -180
+
+            for (int x = -cw; x <= cw; x++) {
+                // SOLID step: thick enough to fill gap to next step below
+                addTexturedCube(x * BLOCK_SIZE, floorY - stepDrop/2 + 5, z * BLOCK_SIZE,
+                       BLOCK_SIZE, stepDrop + 10, BLOCK_SIZE, "reactor_step_metal");
+            }
+            // Walls follow the descent — tall enough to cover full height
+            float wallBase = Math.min(floorY, hallFloorY);
+            float wallTop = floorY + wallH * BLOCK_SIZE + BLOCK_SIZE;
+            float wallTotalH = wallTop - wallBase;
+            addTexturedCube((-cw - 1) * BLOCK_SIZE, wallBase + wallTotalH/2, z * BLOCK_SIZE,
+                   BLOCK_SIZE, wallTotalH, BLOCK_SIZE, "soviet_gray_wall");
+            addTexturedCube((cw + 1) * BLOCK_SIZE, wallBase + wallTotalH/2, z * BLOCK_SIZE,
+                   BLOCK_SIZE, wallTotalH, BLOCK_SIZE, "soviet_gray_wall");
+            // Ceiling follows descent
+            for (int x = -cw; x <= cw; x++) {
                 boolean isLight = (z % 3 == 0) && (x == 0);
-                String texture = isLight ? "fluorescent_light" : "gray_concrete";
-                addTexturedCube(x * BLOCK_SIZE, corridorWallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
+                addTexturedCube(x * BLOCK_SIZE, floorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                       isLight ? "fluorescent_light" : "gray_concrete");
             }
         }
 
-        // === CORRIDOR PIPES along ceiling ===
-        addTexturedCube(-corridorWidth * BLOCK_SIZE + BLOCK_SIZE * 0.3f,
-               (corridorWallH - 0.5f) * BLOCK_SIZE, -15 * BLOCK_SIZE,
-               BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.2f, 6 * BLOCK_SIZE, "iron_block");
-        addTexturedCube(corridorWidth * BLOCK_SIZE - BLOCK_SIZE * 0.3f,
-               (corridorWallH - 0.5f) * BLOCK_SIZE, -15 * BLOCK_SIZE,
-               BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.2f, 6 * BLOCK_SIZE, "iron_block");
+        // Stair handrails
+        for (int z = -34; z >= -42; z--) {
+            float t = (float)(z - (-34)) / (float)(-42 - (-34));
+            float floorY = t * hallFloorY;
+            addTexturedCube((-cw - 0.3f) * BLOCK_SIZE, floorY + BLOCK_SIZE * 0.9f, z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.08f, "iron_block");
+            addTexturedCube((cw + 0.3f) * BLOCK_SIZE, floorY + BLOCK_SIZE * 0.9f, z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.08f, "iron_block");
+        }
 
-        // ===================================
-        // === REACTOR HALL (Room 2) ===
-        // ===================================
-        int hallMinX = -10; // in block units
-        int hallMaxX = 10;
-        int hallMinZ = -30; // far end
-        int hallMaxZ = -18; // connects to corridor
-        int hallWallH = REACTOR_HALL_HEIGHT;
-
-        // === REACTOR HALL FLOOR ===
-        for (int x = hallMinX; x <= hallMaxX; x++) {
-            for (int z = hallMinZ; z <= hallMaxZ; z++) {
-                String texture = ((x + z) % 2 == 0) ? "reactor_floor_metal" : "gray_concrete";
-                addTexturedCube(x * BLOCK_SIZE, 0, z * BLOCK_SIZE, BLOCK_SIZE, 10, BLOCK_SIZE, texture);
+        // ============================================================
+        // SECTION 3: BOTTOM LANDING + TURN LEFT (z = -42 to -46, y = -180)
+        // The corridor widens into a landing at the bottom of stairs,
+        // then opens LEFT (-X direction)
+        // ============================================================
+        for (int z = -42; z >= -46; z--) {
+            for (int x = -cw; x <= cw; x++) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
+            }
+            // Right wall
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube((cw + 1) * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+            // Ceiling
+            for (int x = -cw; x <= cw; x++) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "gray_concrete");
+            }
+        }
+        // Far wall at z = -46 to close the landing
+        for (int x = -cw; x <= cw; x++) {
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
             }
         }
 
-        // === REACTOR HALL WALLS ===
-        // Back wall (far -Z)
-        for (int x = hallMinX; x <= hallMaxX; x++) {
-            for (int h = 0; h < hallWallH; h++) {
-                addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, hallMinZ * BLOCK_SIZE,
+        // ============================================================
+        // SECTION 4: LEFT ARM (going -X at y=-180, z from -42 to -46)
+        // From x = -cw-1 to x = -17 (enters reactor hall's open window side)
+        // ============================================================
+        for (int x = -cw - 1; x >= -18; x--) {
+            for (int z = -42; z >= -46; z--) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
+                // Ceiling
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                       (z == -44 && x % 4 == 0) ? "fluorescent_light" : "gray_concrete");
+            }
+            // Near wall (z = -42 side)
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -42 * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+            // Far wall (z = -46 side)
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            }
+        }
+
+        // Pipes along left arm ceiling
+        addTexturedCube(-10 * BLOCK_SIZE, hallFloorY + (wallH - 0.5f) * BLOCK_SIZE, -44 * BLOCK_SIZE,
+               8 * BLOCK_SIZE, BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.15f, "iron_block");
+
+        // ============================================================
+        // SECTION 5: CONNECTING WALKWAY from left arm to reactor hall
+        // At x=-18, the left arm connects. From here build a walkway
+        // going +Z (towards z=0) to reach the reactor hall floor
+        // which spans z from -12 to +12
+        // Walkway: x = -18 to -20, z from -42 to -12
+        // ============================================================
+        for (int z = -42; z <= -12; z++) {
+            for (int x = -18; x >= -20; x--) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+            }
+            // Left wall (only where there's no reactor hall already — the hall floor starts at x=-17)
+            // The walkway runs along the outside of the reactor hall
+            for (int h = 0; h < wallH; h++) {
+                addTexturedCube(-21 * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
             }
+            // Right side is open (connects to reactor hall space)
+            // Ceiling
+            addTexturedCube(-19 * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                   2 * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                   (z % 6 == 0) ? "fluorescent_light" : "gray_concrete");
         }
-        // Left wall
-        for (int z = hallMinZ; z <= hallMaxZ; z++) {
-            for (int h = 0; h < hallWallH; h++) {
-                addTexturedCube(hallMinX * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-            }
-        }
-        // Right wall
-        for (int z = hallMinZ; z <= hallMaxZ; z++) {
-            for (int h = 0; h < hallWallH; h++) {
-                addTexturedCube(hallMaxX * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-            }
-        }
-        // Front wall (where corridor enters) - only the parts outside the corridor opening
-        for (int x = hallMinX; x <= hallMaxX; x++) {
-            for (int h = 0; h < hallWallH; h++) {
-                boolean isCorridor = (x >= -corridorWidth && x <= corridorWidth && h < corridorWallH);
-                if (!isCorridor) {
-                    addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, hallMaxZ * BLOCK_SIZE,
-                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-                }
-            }
+        // Right side railing along walkway (separating from reactor hall)
+        for (int z = -42; z <= -13; z += 3) {
+            addTexturedCube(-17.5f * BLOCK_SIZE, hallFloorY + BLOCK_SIZE * 0.5f, z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.1f, BLOCK_SIZE * 0.9f, BLOCK_SIZE * 0.1f, "iron_block");
         }
 
-        // === REACTOR HALL CEILING ===
-        for (int x = hallMinX; x <= hallMaxX; x++) {
-            for (int z = hallMinZ; z <= hallMaxZ; z++) {
-                boolean isLight = (Math.abs(x) % 5 == 0) && (Math.abs(z) % 4 == 0);
-                String texture = isLight ? "fluorescent_light" : "gray_concrete";
-                addTexturedCube(x * BLOCK_SIZE, hallWallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
-            }
-        }
 
-        // === REACTOR TOP PLATFORM (central feature) ===
-        // A raised circular platform representing the upper biological shield
-        float platCX = 0;
-        float platCZ = -24 * BLOCK_SIZE; // Center of reactor hall
-        float platY = BLOCK_SIZE * 0.4f; // Slightly raised
-        int platRadius = 5;
-
-        Random capRng = new Random(2604); // April 26th seed
-        for (int dx = -platRadius; dx <= platRadius; dx++) {
-            for (int dz = -platRadius; dz <= platRadius; dz++) {
-                float dist = (float)Math.sqrt(dx*dx + dz*dz);
-                if (dist <= platRadius) {
-                    // Platform base
-                    addTexturedCube(platCX + dx * BLOCK_SIZE, platY, platCZ + dz * BLOCK_SIZE,
-                           BLOCK_SIZE * 0.95f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.95f, "reactor_floor_metal");
-
-                    // Fuel rod caps on inner area
-                    if (dist < platRadius - 1) {
-                        float chance = capRng.nextFloat();
-                        String capTex;
-                        if (chance < 0.1f) capTex = "fuel_cap_red";
-                        else if (chance < 0.2f) capTex = "fuel_cap_blue";
-                        else if (chance < 0.4f) capTex = "fuel_cap_yellow";
-                        else capTex = "fuel_cap_gray";
-                        addTexturedCube(platCX + dx * BLOCK_SIZE, platY + BLOCK_SIZE * 0.2f, platCZ + dz * BLOCK_SIZE,
-                               BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.12f, BLOCK_SIZE * 0.3f, capTex);
-                    }
-                }
-            }
-        }
-
-        // === METAL RAILINGS around reactor platform ===
-        for (int i = 0; i < 24; i++) {
-            double angle = i * Math.PI * 2 / 24;
-            float railR = (platRadius + 1.5f) * BLOCK_SIZE;
-            float rx = platCX + (float)Math.cos(angle) * railR;
-            float rz = platCZ + (float)Math.sin(angle) * railR;
-            // Vertical post
-            addTexturedCube(rx, BLOCK_SIZE * 0.5f, rz,
-                   BLOCK_SIZE * 0.12f, BLOCK_SIZE * 1.0f, BLOCK_SIZE * 0.12f, "iron_block");
-        }
-        // Horizontal rail ring
-        for (int i = 0; i < 48; i++) {
-            double angle = i * Math.PI * 2 / 48;
-            float railR = (platRadius + 1.5f) * BLOCK_SIZE;
-            float rx = platCX + (float)Math.cos(angle) * railR;
-            float rz = platCZ + (float)Math.sin(angle) * railR;
-            addTexturedCube(rx, BLOCK_SIZE * 0.9f, rz,
-                   BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.15f, "iron_block");
-        }
-
-        // === INDUSTRIAL EQUIPMENT ===
-        // Large coolant pipes along left wall
-        for (int z = hallMinZ + 2; z <= hallMaxZ - 2; z += 2) {
-            addTexturedCube((hallMinX + 1.5f) * BLOCK_SIZE, BLOCK_SIZE * 1.5f, z * BLOCK_SIZE,
-                   BLOCK_SIZE * 0.4f, BLOCK_SIZE * 3f, BLOCK_SIZE * 0.4f, "light_blue_concrete");
-        }
-        // Horizontal pipe connecting them
-        addTexturedCube((hallMinX + 1.5f) * BLOCK_SIZE, BLOCK_SIZE * 3f,
-               ((hallMinZ + hallMaxZ) / 2f) * BLOCK_SIZE,
-               BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.3f,
-               (hallMaxZ - hallMinZ) / 2f * BLOCK_SIZE, "light_blue_concrete");
-
-        // Emergency coolant valve (interactable in future)
-        addTexturedCube((hallMaxX - 2) * BLOCK_SIZE, BLOCK_SIZE * 0.8f, (hallMinZ + 3) * BLOCK_SIZE,
-               BLOCK_SIZE * 0.8f, BLOCK_SIZE * 1.2f, BLOCK_SIZE * 0.8f, "iron_block");
-        addTexturedCube((hallMaxX - 2) * BLOCK_SIZE, BLOCK_SIZE * 1.5f, (hallMinZ + 3) * BLOCK_SIZE,
-               BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.6f, BLOCK_SIZE * 0.4f, "redstone_block");
-
-        // Equipment cabinets along right wall
-        for (int z = hallMinZ + 2; z <= hallMaxZ - 2; z += 3) {
-            addTexturedCube((hallMaxX - 1.5f) * BLOCK_SIZE, BLOCK_SIZE, z * BLOCK_SIZE,
-                   BLOCK_SIZE * 0.6f, BLOCK_SIZE * 2f, BLOCK_SIZE * 1.2f, "control_panel_cream");
-        }
-
-        // === SIGN above corridor entrance (inside reactor hall) ===
-        addTexturedCube(0, (corridorWallH - 0.5f) * BLOCK_SIZE, (hallMaxZ + 0.3f) * BLOCK_SIZE,
-               3 * BLOCK_SIZE, BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.1f, "redstone_block");
 
         // === NPC: PEREVOZCHENKO (Reactor Section Foreman) ===
-        // Standing near the reactor platform, to the right
+        // Standing on the walkway near where it opens to the reactor hall,
+        // inspecting the reactor from the catwalk
         createNPCEngineer("Perevozchenko",
-            4 * BLOCK_SIZE,         // x: right of reactor platform
-            0,                       // y: floor level
-            -22 * BLOCK_SIZE,       // z: in the reactor hall
-            -1.57f,                 // facing: towards the reactor (negative X direction)
+            -19 * BLOCK_SIZE,       // x: on the walkway
+            hallFloorY,             // y: reactor hall floor level (-180)
+            -6 * BLOCK_SIZE,        // z: midway along walkway, near reactor
+            0.0f,                   // facing: towards +Z (looking along the reactor hall)
             "perevozchenko_head", "perevozchenko_body", "perevozchenko_legs", "perevozchenko_arms");
     }
     
@@ -7271,6 +7334,114 @@ public class ChernobylGameCore {
             }
         }
         return createTextureFromPixels(atlas, W, H);
+    }
+
+    // Perevozchenko: reactor section foreman, young worker with orange hard hat
+    private int generatePerevozchHeadAtlas() {
+        int W = 64, H = 16, S = 16;
+        int[] atlas = new int[W * H];
+        int[] front = generatePerevozchHeadFrontPixels();
+        // Tanned skin (210,170,130), dark brown hair (90,60,35) mostly hidden under hard hat
+        int[] back  = generateHeadBackPixels(210, 170, 130, 90, 60, 35);
+        int[] side  = generateHeadSidePixels(210, 170, 130, 90, 60, 35, 200, 160, 120);
+        // Top: orange hard hat color
+        int[] top   = generateHeadTopPixels(220, 120, 30);
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                atlas[y * W + x]          = front[y * S + x];
+                atlas[y * W + S + x]      = back[y * S + x];
+                atlas[y * W + S * 2 + x]  = side[y * S + x];
+                atlas[y * W + S * 3 + x]  = top[y * S + x];
+            }
+        }
+        return createTextureFromPixels(atlas, W, H);
+    }
+
+    private int[] generatePerevozchHeadFrontPixels() {
+        int S = 16;
+        int[] pixels = new int[S * S];
+        // Perevozchenko: young, tanned worker skin, short dark hair, orange hard hat, blue eyes
+        int skin     = rgba(210, 170, 130);
+        int skinLt   = rgba(220, 182, 142);
+        int skinDk   = rgba(190, 150, 112);
+        int skinNeck = rgba(180, 140, 102);
+
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+                pixels[y * S + x] = skin;
+
+        // Orange hard hat (top 4 rows)
+        int hatOr  = rgba(220, 120, 30);
+        int hatDk  = rgba(190, 100, 20);
+        int hatLt  = rgba(240, 140, 45);
+        for (int x = 1; x <= 14; x++) pixels[0 * S + x] = hatDk;
+        for (int x = 0; x <= 15; x++) pixels[1 * S + x] = hatOr;
+        for (int x = 0; x <= 15; x++) pixels[2 * S + x] = (x == 4 || x == 11) ? hatLt : hatOr;
+        for (int x = 1; x <= 14; x++) pixels[3 * S + x] = hatDk; // Hat brim
+        pixels[3 * S + 0] = hatDk; pixels[3 * S + 15] = hatDk;
+
+        // Short dark hair visible below hat brim on sides
+        int hairDk = rgba(90, 60, 35);
+        pixels[4 * S + 0] = hairDk; pixels[4 * S + 1] = hairDk;
+        pixels[4 * S + 14] = hairDk; pixels[4 * S + 15] = hairDk;
+        pixels[5 * S + 0] = hairDk; pixels[5 * S + 15] = hairDk;
+
+        // Forehead
+        for (int x = 2; x <= 13; x++) pixels[4 * S + x] = skinLt;
+
+        // Eyebrows - dark, strong worker brows
+        int brow = rgba(75, 50, 28);
+        for (int x = 3; x <= 6; x++) pixels[5 * S + x] = brow;
+        for (int x = 9; x <= 12; x++) pixels[5 * S + x] = brow;
+
+        // Blue eyes
+        int eyeW = rgba(235, 235, 235);
+        int eyeB = rgba(50, 120, 200);
+        int eyeBd = rgba(35, 90, 160);
+        int pupil = rgba(15, 15, 15);
+        pixels[6 * S + 3] = skinDk; pixels[6 * S + 4] = eyeW; pixels[6 * S + 5] = eyeB; pixels[6 * S + 6] = eyeW;
+        pixels[7 * S + 3] = skinDk; pixels[7 * S + 4] = eyeBd; pixels[7 * S + 5] = pupil; pixels[7 * S + 6] = eyeBd;
+        pixels[6 * S + 9] = eyeW; pixels[6 * S + 10] = eyeB; pixels[6 * S + 11] = eyeW; pixels[6 * S + 12] = skinDk;
+        pixels[7 * S + 9] = eyeBd; pixels[7 * S + 10] = pupil; pixels[7 * S + 11] = eyeBd; pixels[7 * S + 12] = skinDk;
+
+        // Under-eye shadows (faint, young face)
+        for (int x = 3; x <= 6; x++) pixels[8 * S + x] = skinDk;
+        for (int x = 9; x <= 12; x++) pixels[8 * S + x] = skinDk;
+
+        // Nose
+        int nose = rgba(195, 155, 118);
+        int noseTip = rgba(185, 145, 108);
+        pixels[8 * S + 7] = nose; pixels[8 * S + 8] = nose;
+        pixels[9 * S + 6] = skinDk; pixels[9 * S + 7] = noseTip; pixels[9 * S + 8] = noseTip; pixels[9 * S + 9] = skinDk;
+
+        // Light stubble (worker)
+        int stubble = rgba(175, 140, 105);
+        pixels[10 * S + 4] = stubble; pixels[10 * S + 6] = stubble;
+        pixels[10 * S + 9] = stubble; pixels[10 * S + 11] = stubble;
+        pixels[11 * S + 3] = stubble; pixels[11 * S + 5] = stubble;
+        pixels[11 * S + 10] = stubble; pixels[11 * S + 12] = stubble;
+
+        // Mouth
+        int mouth = rgba(160, 105, 72);
+        int mouthDk = rgba(130, 80, 55);
+        pixels[11 * S + 6] = mouth;
+        for (int x = 7; x <= 8; x++) pixels[11 * S + x] = mouthDk;
+        pixels[11 * S + 9] = mouth;
+
+        // Chin + jaw (broader face)
+        for (int x = 2; x <= 13; x++) pixels[12 * S + x] = skin;
+        pixels[13 * S + 1] = skinDk; pixels[13 * S + 14] = skinDk;
+        for (int x = 3; x <= 12; x++) pixels[13 * S + x] = skin;
+        for (int x = 4; x <= 11; x++) pixels[14 * S + x] = skinDk;
+
+        // Neck
+        for (int x = 4; x <= 11; x++) pixels[15 * S + x] = skinNeck;
+
+        // Ears
+        int ear = rgba(200, 160, 120);
+        for (int y = 6; y <= 9; y++) { pixels[y * S + 1] = ear; pixels[y * S + 14] = ear; }
+
+        return pixels;
     }
 
     private int[] generateDyatlovHeadFrontPixels() {
@@ -7956,7 +8127,7 @@ public class ChernobylGameCore {
     // Create an NPC engineer in the scene
     private void createNPCEngineer(String name, float x, float y, float z, float facing, String headTex, String bodyTex, String legsTex, String armsTex) {
         // Scale NPCs to match player height (player eye at 120)
-        float floorY = 0; // Floor level
+        float floorY = y; // Floor level (use the passed Y position)
         float headSize = 25f;
         float bodyWidth = 30f;
         float bodyHeight = 50f;
@@ -8450,9 +8621,43 @@ public class ChernobylGameCore {
         
         cameraPos.y = newY;
         
-        // Ground collision
-        if (cameraPos.y <= GROUND_LEVEL) {
-            cameraPos.y = GROUND_LEVEL;
+        // Ground collision - dynamic floor level based on zone
+        float currentGroundLevel = GROUND_LEVEL; // Default control room floor
+        
+        // Check player zone for correct floor height
+        float px = cameraPos.x;
+        float pz = cameraPos.z;
+        
+        // Zone: STAIRS (z from -34 to -42, x within corridor width)
+        boolean onStairs = (pz < -34 * BLOCK_SIZE && pz >= -42 * BLOCK_SIZE
+                           && px > -3 * BLOCK_SIZE && px < 3 * BLOCK_SIZE);
+        // Zone: BOTTOM LEVEL (landing, left arm, walkway, or reactor hall at y=-180)
+        boolean atBottomLevel = false;
+        if (pz < -42 * BLOCK_SIZE && pz >= -46 * BLOCK_SIZE) {
+            // Landing + left arm: z=-42 to -46
+            atBottomLevel = true;
+        } else if (px <= -18 * BLOCK_SIZE && px >= -21 * BLOCK_SIZE
+                   && pz >= -42 * BLOCK_SIZE && pz <= -12 * BLOCK_SIZE
+                   && cameraPos.y < GROUND_LEVEL - 50f) {
+            // Walkway: x=-18 to -20, z=-42 to -12
+            atBottomLevel = true;
+        }
+        // Zone: REACTOR HALL (x < -17*BS, y already low, within hall Z range)
+        boolean inReactorHall = (px <= -17 * BLOCK_SIZE && pz >= -12 * BLOCK_SIZE && pz <= 12 * BLOCK_SIZE
+                                && cameraPos.y < GROUND_LEVEL - 50f);
+        
+        if (onStairs) {
+            // Stairs: z=-34 → y=0, z=-42 → y=-180
+            float t = (pz - (-34 * BLOCK_SIZE)) / ((-42 * BLOCK_SIZE) - (-34 * BLOCK_SIZE));
+            t = Math.max(0f, Math.min(1f, t));
+            float stairFloorY = t * REACTOR_HALL_FLOOR_Y;
+            currentGroundLevel = GROUND_LEVEL + stairFloorY;
+        } else if (atBottomLevel || inReactorHall) {
+            currentGroundLevel = GROUND_LEVEL + REACTOR_HALL_FLOOR_Y;
+        }
+        
+        if (cameraPos.y <= currentGroundLevel) {
+            cameraPos.y = currentGroundLevel;
             velocityY = 0f;
             isOnGround = true;
         }
@@ -8563,98 +8768,152 @@ public class ChernobylGameCore {
     }
     
     // Collision detection - returns true if position collides with walls or objects
+    // Supports: Control Room, Long Straight Corridor, Turn, Left Arm with Stairs, Reactor Hall
     private boolean checkCollision(float x, float y, float z) {
-        // Check room boundaries (walls)
-        // Left wall - allow closer near window area
-        boolean nearWindow = (z >= -4 * BLOCK_SIZE && z <= 4 * BLOCK_SIZE);
-        if (nearWindow) {
-            // Can walk right up to glass (just a small buffer)
-            if (x - PLAYER_RADIUS < -ROOM_WIDTH + BLOCK_SIZE * 0.2f) return true;
+        float PR = PLAYER_RADIUS;
+        float BS = BLOCK_SIZE;
+
+        // Zone detection — check specific lower-level zones FIRST to prevent
+        // broad zones (like straight corridor) from catching walkway/reactor hall positions
+        boolean inWalkway = (x <= -18 * BS && x >= -21 * BS 
+            && z >= -42 * BS && z <= -12 * BS && y < -50f);
+        boolean inReactorHall = (x <= -17 * BS && z >= -12 * BS && z <= 12 * BS && y < -50f);
+        boolean inControlRoom = (z >= CORRIDOR_START_Z && !inReactorHall);
+        boolean inBottomLanding = (!inWalkway && z < -42 * BS && z >= -46 * BS);
+        boolean inStairs = (!inWalkway && z < -34 * BS && z >= -42 * BS 
+            && x >= -(CORRIDOR_HALF_WIDTH + 2 * BS) && x <= (CORRIDOR_HALF_WIDTH + 2 * BS));
+        boolean inStraightCorridor = (!inWalkway && !inReactorHall 
+            && z < CORRIDOR_START_Z && z >= -34 * BS
+            && x >= -(CORRIDOR_HALF_WIDTH + 2 * BS) && x <= (CORRIDOR_HALF_WIDTH + 2 * BS));
+
+        // Check walkway and reactor hall FIRST (they need priority over corridor zones)
+        if (inWalkway) {
+            // ============= WALKWAY (x=-18 to -21, z=-42 to -12) =============
+            if (x - PR < -21 * BS) return true;  // Left wall
+            // Right side open (railing only, no collision)
+            // Allow exit to reactor hall when z > -12*BS
+
+        } else if (inReactorHall) {
+            // ============= EXISTING REACTOR HALL =============
+            float hallX = -17 * BS;
+            float hallFarX = hallX - 25 * BS; // -42*BS
+            float hallDepth = 12; // blocks in ±z
+
+            if (x + PR > hallX) return true; // Window-side boundary
+            if (x - PR < hallFarX + BS) return true; // Far wall
+            if (z + PR > hallDepth * BS - BS) return true; // Side wall +Z
+            // Side wall -Z: allow passage if near walkway doorway (x from -18 to -21)
+            if (z - PR < -hallDepth * BS + BS) {
+                if (x > -17 * BS || x < -21 * BS) return true;
+            }
+
+        } else if (inControlRoom) {
+            // ============= CONTROL ROOM =============
+            boolean nearWindow = (z >= -4 * BS && z <= 4 * BS);
+            if (nearWindow) {
+                if (x - PR < -ROOM_WIDTH + BS * 0.2f) return true;
+            } else {
+                if (x - PR < -ROOM_WIDTH + BS) return true;
+            }
+            if (x + PR > ROOM_WIDTH - BS) return true;
+            if (z + PR > ROOM_DEPTH - BS) return true;
+            // Front wall - with door opening to corridor
+            if (z - PR < CORRIDOR_START_Z + BS) {
+                boolean inDoorway = (x > -2.5f * BS && x < 2.5f * BS);
+                if (!inDoorway) return true;
+            }
+
+        } else if (inStraightCorridor) {
+            // ============= STRAIGHT CORRIDOR (z from -12 to -34, flat) =============
+            if (x - PR < -CORRIDOR_HALF_WIDTH - BS) return true;  // Left wall
+            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;   // Right wall
+
+        } else if (inStairs) {
+            // ============= STAIRS (z from -34 to -42, descending) =============
+            if (x - PR < -CORRIDOR_HALF_WIDTH - BS) return true;  // Left wall
+            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;   // Right wall
+
+        } else if (inBottomLanding) {
+            // ============= BOTTOM LANDING + LEFT ARM (z from -42 to -46) =============
+            // Right wall (x = +3*BS)
+            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;
+            // Far wall at z = -46
+            if (z - PR < -46 * BS) return true;
+            // Left boundary: open to walkway at x <= -18*BS
+            // Near wall (z = -42 side) only for x outside the corridor opening
+            if (z + PR > -42 * BS && x < -CORRIDOR_HALF_WIDTH) return true;
+
         } else {
-            if (x - PLAYER_RADIUS < -ROOM_WIDTH + BLOCK_SIZE) return true;
+            // Outside all known zones - solid wall
+            return true;
         }
-        // Right wall
-        if (x + PLAYER_RADIUS > ROOM_WIDTH - BLOCK_SIZE) return true;
-        // Front wall
-        if (z - PLAYER_RADIUS < -ROOM_DEPTH + BLOCK_SIZE) return true;
-        // Back wall
-        if (z + PLAYER_RADIUS > ROOM_DEPTH - BLOCK_SIZE) return true;
-        
-        // Check collision with objects (control panels, desk, etc.)
-        // Main control desk (at z = -6 * BLOCK_SIZE, x from -10 to +10)
-        // Only collide if player is below desk top level
-        float deskZ = -6 * BLOCK_SIZE;
-        float deskDepth = BLOCK_SIZE * 1.5f;
-        float deskTopY = 1.2f * BLOCK_SIZE + 120f;
-        if (y < deskTopY) { // Only block if below desk height
-            if (z > deskZ - deskDepth - PLAYER_RADIUS && z < deskZ + PLAYER_RADIUS) {
-                if (x > -10 * BLOCK_SIZE - PLAYER_RADIUS && x < 10 * BLOCK_SIZE + PLAYER_RADIUS) {
-                    return true;
+
+        // === CONTROL ROOM FURNITURE COLLISION ===
+        if (inControlRoom) {
+            float deskZ = -6 * BS;
+            float deskDepth = BS * 1.5f;
+            float deskTopY = 1.2f * BS + 120f;
+            if (y < deskTopY) {
+                if (z > deskZ - deskDepth - PR && z < deskZ + PR) {
+                    if (x > -10 * BS - PR && x < 10 * BS + PR) {
+                        return true;
+                    }
+                }
+            }
+
+            float tableZPos = 4 * BS;
+            float tableWidth = BS * 2.5f;
+            float tableLength = BS * 6;
+            float tableTopY = 0.9f * BS + 120f;
+            if (y < tableTopY) {
+                if (x > -tableWidth/2 - PR && x < tableWidth/2 + PR) {
+                    if (z > tableZPos - tableLength/2 - PR && z < tableZPos + tableLength/2 + PR) {
+                        return true;
+                    }
+                }
+            }
+
+            float chairSize = BS * 0.7f;
+            for (int cz = -2; cz <= 2; cz += 2) {
+                float chairZ = tableZPos + cz * BS;
+                float leftChairX = -BS * 2.2f;
+                if (x > leftChairX - chairSize/2 - PR && x < leftChairX + chairSize/2 + PR) {
+                    if (z > chairZ - chairSize/2 - PR && z < chairZ + chairSize/2 + PR) {
+                        return true;
+                    }
+                }
+                float rightChairX = BS * 2.2f;
+                if (x > rightChairX - chairSize/2 - PR && x < rightChairX + chairSize/2 + PR) {
+                    if (z > chairZ - chairSize/2 - PR && z < chairZ + chairSize/2 + PR) {
+                        return true;
+                    }
+                }
+            }
+
+            float panelX = (16 - 1.5f) * BS;
+            float panelWidth = BS * 0.5f;
+            float panelDepth = BS * 2;
+            for (int pz = -8; pz <= 8; pz += 4) {
+                float panelZ = pz * BS;
+                if (x > panelX - panelWidth/2 - PR && x < panelX + panelWidth/2 + PR) {
+                    if (z > panelZ - panelDepth/2 - PR && z < panelZ + panelDepth/2 + PR) {
+                        return true;
+                    }
+                }
+            }
+
+            for (int pz = (int)(-ROOM_DEPTH/BS) + 3; pz <= (int)(ROOM_DEPTH/BS) - 3; pz += 4) {
+                if (pz >= -4 && pz <= 4) continue;
+                float panelZ = pz * BS;
+                float leftPanelX = (-16 + 1.5f) * BS;
+                if (x < leftPanelX + BS + PR) {
+                    if (z > panelZ - BS - PR && z < panelZ + BS + PR) {
+                        return true;
+                    }
                 }
             }
         }
-        
-        // Engineer table (centered at x = 0, at z = 4 * BLOCK_SIZE)
-        // Only collide if player is below table top level
-        float tableZPos = 4 * BLOCK_SIZE;
-        float tableWidth = BLOCK_SIZE * 2.5f;
-        float tableLength = BLOCK_SIZE * 6;
-        float tableTopY = 0.9f * BLOCK_SIZE + 120f;
-        if (y < tableTopY) { // Only block if below table height
-            if (x > -tableWidth/2 - PLAYER_RADIUS && x < tableWidth/2 + PLAYER_RADIUS) {
-                if (z > tableZPos - tableLength/2 - PLAYER_RADIUS && z < tableZPos + tableLength/2 + PLAYER_RADIUS) {
-                    return true;
-                }
-            }
-        }
-        
-        // Chairs around table (left side at x = -2.2 * BLOCK_SIZE, right side at x = 2.2 * BLOCK_SIZE)
-        float chairSize = BLOCK_SIZE * 0.7f;
-        for (int cz = -2; cz <= 2; cz += 2) {
-            float chairZ = tableZPos + cz * BLOCK_SIZE;
-            // Left chair
-            float leftChairX = -BLOCK_SIZE * 2.2f;
-            if (x > leftChairX - chairSize/2 - PLAYER_RADIUS && x < leftChairX + chairSize/2 + PLAYER_RADIUS) {
-                if (z > chairZ - chairSize/2 - PLAYER_RADIUS && z < chairZ + chairSize/2 + PLAYER_RADIUS) {
-                    return true;
-                }
-            }
-            // Right chair
-            float rightChairX = BLOCK_SIZE * 2.2f;
-            if (x > rightChairX - chairSize/2 - PLAYER_RADIUS && x < rightChairX + chairSize/2 + PLAYER_RADIUS) {
-                if (z > chairZ - chairSize/2 - PLAYER_RADIUS && z < chairZ + chairSize/2 + PLAYER_RADIUS) {
-                    return true;
-                }
-            }
-        }
-        
-        // Secondary control panels (along right wall at z = -8, -4, 0, 4, 8)
-        float panelX = (16 - 1.5f) * BLOCK_SIZE;  // Against right wall
-        float panelWidth = BLOCK_SIZE * 0.5f;
-        float panelDepth = BLOCK_SIZE * 2;
-        for (int pz = -8; pz <= 8; pz += 4) {
-            float panelZ = pz * BLOCK_SIZE;
-            if (x > panelX - panelWidth/2 - PLAYER_RADIUS && x < panelX + panelWidth/2 + PLAYER_RADIUS) {
-                if (z > panelZ - panelDepth/2 - PLAYER_RADIUS && z < panelZ + panelDepth/2 + PLAYER_RADIUS) {
-                    return true;
-                }
-            }
-        }
-        
-        // Standing panels along left wall - but not in window area
-        for (int pz = (int)(-ROOM_DEPTH/BLOCK_SIZE) + 3; pz <= (int)(ROOM_DEPTH/BLOCK_SIZE) - 3; pz += 4) {
-            // Skip collision check for window area (z from -4 to 4)
-            if (pz >= -4 && pz <= 4) continue;
-            
-            float panelZ = pz * BLOCK_SIZE;
-            float leftPanelX = (-16 + 1.5f) * BLOCK_SIZE;
-            if (x < leftPanelX + BLOCK_SIZE + PLAYER_RADIUS) {
-                if (z > panelZ - BLOCK_SIZE - PLAYER_RADIUS && z < panelZ + BLOCK_SIZE + PLAYER_RADIUS) {
-                    return true;
-                }
-            }
-        }
-        
+
         return false;
     }
 
