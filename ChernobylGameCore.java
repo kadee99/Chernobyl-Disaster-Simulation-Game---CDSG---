@@ -211,6 +211,16 @@ public class ChernobylGameCore {
     private String machineLogMessage = "";      // Log message at bottom of panel
     private float machineLogTimer = 0f;         // How long to show log
 
+    // === ELENA ENHANCED SCAN SYSTEM ===
+    private boolean[] elenaScannedSectors = new boolean[18 * 18]; // Track which sectors were scanned
+    private int elenaUniqueScanCount = 0;        // Unique sectors scanned (for bonuses)
+    private int elenaHotSpotsFound = 0;          // Xenon hot spots detected
+    private int elenaVoidSectorsFound = 0;       // Void coefficient anomalies detected
+    private float elenaScanStabilityBonus = 0f;  // Cumulative stability bonus from scanning
+    private boolean elenaXenonWarningGiven = false;  // Whether player got xenon early warning
+    private boolean elenaVoidWarningGiven = false;    // Whether player detected void danger
+    private float elenaScanNeglectPenalty = 0f;  // Stability penalty for not scanning enough
+
     // Mouse state for machine UI
     private float machineMouseX = 0f;           // Mouse X in screen coords
     private float machineMouseY = 0f;           // Mouse Y in screen coords (flipped for OpenGL)
@@ -1284,6 +1294,14 @@ public class ChernobylGameCore {
         playerConfirmedTestReady = false;
         phaseTimer = 0;
         elenaScanCount = 0;
+        elenaUniqueScanCount = 0;
+        elenaHotSpotsFound = 0;
+        elenaVoidSectorsFound = 0;
+        elenaScanStabilityBonus = 0f;
+        elenaXenonWarningGiven = false;
+        elenaVoidWarningGiven = false;
+        elenaScanNeglectPenalty = 0f;
+        java.util.Arrays.fill(elenaScannedSectors, false);
         machineUIActive = false;
         dialogueActive = false;
         storyIntroShown = false;
@@ -1889,13 +1907,15 @@ public class ChernobylGameCore {
                 lines = new String[]{
                     "WALK TO THE ELENA DISPLAY AND PRESS E TO OPEN.",
                     "",
-                    "ELENA SHOWS THE REACTOR CORE MAP WITH A GRID",
-                    "OF FUEL CHANNELS. EACH CELL SHOWS LOCAL POWER.",
+                    "ELENA MAPS THE REACTOR CORE. CLICK SECTORS TO SCAN.",
+                    "SCANNING DETECTS XENON HOT SPOTS (ORANGE) AND",
+                    "VOID COEFFICIENT ANOMALIES (PURPLE).",
                     "",
-                    "CLICK A CELL TO SELECT AND SCAN IT.",
-                    "RIGHT-CLICK TO SCAN THE CURRENT SELECTION.",
+                    "EACH NEW SECTOR SCANNED BOOSTS STABILITY (+0.5%).",
+                    "FINDING 3+ HOT SPOTS GIVES AN EARLY WARNING.",
+                    "IF YOU NEGLECT SCANNING STABILITY DROPS FASTER!",
                     "",
-                    "USE ELENA TO MONITOR REACTOR CORE STATUS."
+                    "MONITOR THE SCAN PROGRESS PANEL ON THE LEFT."
                 };
                 break;
             default:
@@ -2131,21 +2151,31 @@ public class ChernobylGameCore {
                         "each sector of the core. Scan at",
                         "least 3 sectors by clicking on them.",
                         "",
-                        "We must check the xenon-135 levels",
-                        "before we can proceed safely."
+                        "Look for XENON HOT SPOTS - they",
+                        "glow ORANGE on the display. Each",
+                        "scan you do improves stability.",
+                        "",
+                        "Do NOT skip this! If you neglect",
+                        "ELENA the reactor gets worse faster."
                     };
                 } else if (npcName.equals("Akimov")) {
                     return new String[]{
                         "Go to the ELENA display and scan",
                         "the core sectors. We need to know",
                         "the xenon distribution before the",
-                        "test can continue."
+                        "test can continue.",
+                        "",
+                        "Scan thoroughly - the more sectors",
+                        "you check the better our stability."
                     };
                 } else {
                     return new String[]{
                         "ELENA is the large display near",
                         "the back wall. Press E to open it",
-                        "and click sectors to scan them."
+                        "and click sectors to scan them.",
+                        "",
+                        "Watch for orange hot spots - those",
+                        "are xenon-135 danger zones."
                     };
                 }
             case 4:
@@ -2231,10 +2261,13 @@ public class ChernobylGameCore {
                         "one more time - we need 5+ sectors",
                         "scanned to confirm core stability.",
                         "",
-                        "Then open the CONTROL PANEL (click).",
-                        "Scroll DOWN to TURBINE (DOWN arrow",
-                        "or mouse wheel) then LEFT-CLICK to",
-                        "DISCONNECT it.",
+                        "Look for PURPLE sectors - those show",
+                        "VOID COEFFICIENT anomalies. If you",
+                        "see them AZ-5 could cause a surge!",
+                        "",
+                        "Then open the CONTROL PANEL (press E).",
+                        "Scroll DOWN to TURBINE then LEFT-CLICK",
+                        "to DISCONNECT it.",
                         "",
                         "If anything goes wrong after the",
                         "test... we use the AZ-5 button.",
@@ -2845,10 +2878,13 @@ public class ChernobylGameCore {
         }
 
         // Stability: low rods + high xenon + low coolant = bad
+        // ELENA scanning rewards knowledge, neglect penalizes ignorance
         reactorStability = 100f;
         if (controlRodsInserted < 30) reactorStability -= (30 - controlRodsInserted) * 2f;
         if (xenonLevel > 50) reactorStability -= (xenonLevel - 50) * 0.5f;
         if (coolantFlow < 50) reactorStability -= (50 - coolantFlow) * 0.8f;
+        reactorStability += elenaScanStabilityBonus;  // Reward for ELENA scanning
+        reactorStability -= elenaScanNeglectPenalty;   // Penalty for ignoring ELENA
         reactorStability = Math.max(0f, Math.min(100f, reactorStability));
 
         // Story progression triggers from machine interaction
@@ -2913,6 +2949,88 @@ public class ChernobylGameCore {
                 return;
             }
         }
+    }
+
+    // === ELENA ENHANCED SCAN METHOD ===
+    private void performElenaScan(int sectorIndex, int gridSize) {
+        elenaScanTimer = 2f;
+        elenaScanCount++;
+        playerCheckedElena = true;
+
+        int row = sectorIndex / gridSize;
+        int col = sectorIndex % gridSize;
+
+        // Track unique scans and give stability bonus
+        boolean isNewScan = !elenaScannedSectors[sectorIndex];
+        elenaScannedSectors[sectorIndex] = true;
+        if (isNewScan) {
+            elenaUniqueScanCount++;
+            // Each unique scan gives a small stability bonus (reward for thoroughness)
+            elenaScanStabilityBonus += 0.5f;
+            elenaScanStabilityBonus = Math.min(15f, elenaScanStabilityBonus); // cap at +15%
+        }
+
+        // Determine sector characteristics based on position + reactor state
+        Random sectorRand = new Random(row * 19 + col * 37 + (int)(reactorPower * 10));
+        float sectorXenon = xenonLevel * (0.6f + sectorRand.nextFloat() * 0.8f);
+        float sectorVoid = voidCoefficient * (0.5f + sectorRand.nextFloat());
+        boolean isHotSpot = sectorXenon > 40f;
+        boolean isVoidSector = sectorVoid > 0.3f;
+
+        // Detect xenon hot spots
+        if (isHotSpot && isNewScan) {
+            elenaHotSpotsFound++;
+            if (elenaHotSpotsFound >= 3 && !elenaXenonWarningGiven) {
+                elenaXenonWarningGiven = true;
+                showNotification("ELENA WARNING: XENON-135 HOT SPOTS DETECTED IN " + elenaHotSpotsFound + " SECTORS!");
+                // Early xenon warning gives a stability bonus
+                elenaScanStabilityBonus += 3f;
+                elenaScanStabilityBonus = Math.min(15f, elenaScanStabilityBonus);
+            }
+        }
+
+        // Detect void coefficient anomalies (late game)
+        if (isVoidSector && isNewScan && storyPhase >= 5) {
+            elenaVoidSectorsFound++;
+            if (elenaVoidSectorsFound >= 2 && !elenaVoidWarningGiven) {
+                elenaVoidWarningGiven = true;
+                showNotification("ELENA ALERT: POSITIVE VOID COEFFICIENT DETECTED! AZ-5 MAY CAUSE SURGE!");
+                // Critical info - bigger stability bonus for finding this
+                elenaScanStabilityBonus += 5f;
+                elenaScanStabilityBonus = Math.min(15f, elenaScanStabilityBonus);
+            }
+        }
+
+        // Generate scan result message
+        if (storyPhase == 6 && elenaScanCount >= 5) {
+            playerConfirmedTestReady = true;
+            showMachineLog("CORE SCAN COMPLETE - TEST READINESS CONFIRMED");
+        } else if (isHotSpot && isVoidSector) {
+            showMachineLog("SECTOR " + row + "," + col + ": XENON=" + String.format("%.0f", sectorXenon) + "% + VOID ANOMALY!");
+        } else if (isHotSpot) {
+            showMachineLog("SECTOR " + row + "," + col + ": XENON HOT SPOT - " + String.format("%.0f", sectorXenon) + "%");
+        } else if (isVoidSector) {
+            showMachineLog("SECTOR " + row + "," + col + ": VOID COEFFICIENT WARNING");
+        } else if (isNewScan) {
+            showMachineLog("SECTOR " + row + "," + col + ": NOMINAL - XENON=" + String.format("%.0f", sectorXenon) + "%");
+        } else {
+            showMachineLog("SECTOR " + row + "," + col + ": RE-SCAN - NO CHANGE DETECTED");
+        }
+    }
+
+    // Helper: check if a sector is a xenon hot spot (for rendering)
+    private boolean isSectorXenonHotSpot(int row, int col) {
+        Random r = new Random(row * 19 + col * 37 + (int)(reactorPower * 10));
+        float sectorXenon = xenonLevel * (0.6f + r.nextFloat() * 0.8f);
+        return sectorXenon > 40f;
+    }
+
+    // Helper: check if a sector has void coefficient anomaly (for rendering)
+    private boolean isSectorVoidAnomaly(int row, int col) {
+        Random r = new Random(row * 19 + col * 37 + (int)(reactorPower * 10));
+        r.nextFloat(); // skip xenon random
+        float sectorVoid = voidCoefficient * (0.5f + r.nextFloat());
+        return sectorVoid > 0.3f && storyPhase >= 5;
     }
 
     private void showMachineLog(String msg) {
@@ -3158,33 +3276,26 @@ public class ChernobylGameCore {
                         elenaSelectedSector = gy * gridSize + gx;
                         // Left click to scan
                         if (mouseLeftClicked) {
-                            elenaScanTimer = 2f;
-                            elenaScanCount++;
-                            playerCheckedElena = true;
-                            if (storyPhase == 6 && elenaScanCount >= 5) {
-                                playerConfirmedTestReady = true;
-                                showMachineLog("CORE SCAN COMPLETE - TEST READINESS CONFIRMED");
-                            } else {
-                                showMachineLog("SCANNING SECTOR " + elenaSelectedSector + "...");
-                            }
+                            performElenaScan(elenaSelectedSector, gridSize);
                         }
                     }
                 }
 
                 // Right-click anywhere to scan current selection
                 if (mouseRightClicked && elenaSelectedSector >= 0) {
-                    elenaScanTimer = 2f;
-                    elenaScanCount++;
-                    playerCheckedElena = true;
-                    if (storyPhase == 6 && elenaScanCount >= 5) {
-                        playerConfirmedTestReady = true;
-                        showMachineLog("CORE SCAN COMPLETE - TEST READINESS CONFIRMED");
-                    } else {
-                        showMachineLog("SCANNING SECTOR " + elenaSelectedSector + "...");
-                    }
+                    performElenaScan(elenaSelectedSector, gridSize);
                 }
 
                 elenaScanTimer = Math.max(0, elenaScanTimer - dt);
+
+                // Scan neglect penalty: if story has progressed but player isn't scanning, reactor degrades faster
+                if (storyPhase >= 3 && elenaUniqueScanCount < 5) {
+                    elenaScanNeglectPenalty = (5 - elenaUniqueScanCount) * 2f; // up to -10 stability
+                } else if (storyPhase >= 6 && elenaUniqueScanCount < 15) {
+                    elenaScanNeglectPenalty = (15 - elenaUniqueScanCount) * 1f; // up to -15 stability
+                } else {
+                    elenaScanNeglectPenalty = 0f;
+                }
 
                 // Keyboard still works for ELENA
                 if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
@@ -3661,10 +3772,21 @@ public class ChernobylGameCore {
                     float localStress = (1f - reactorStability / 100f);
                     Random rand = new Random(gx * 19 + gy * 37);
                     float variation = rand.nextFloat();
+                    boolean sectorScanned = elenaScannedSectors[gy * gridSize + gx];
+                    boolean isHotSpot = sectorScanned && isSectorXenonHotSpot(gy, gx);
+                    boolean isVoid = sectorScanned && isSectorVoidAnomaly(gy, gx);
 
                     if (storyPhase >= 8) {
                         float flash = (float)(Math.sin(System.currentTimeMillis() * 0.01 + gx * 0.5 + gy * 0.3) * 0.5 + 0.5);
                         r = 1f; g = flash * 0.3f; b = 0f;
+                    } else if (isVoid) {
+                        // Void sectors pulse magenta/purple
+                        float pulse = (float)(Math.sin(System.currentTimeMillis() * 0.006 + gx) * 0.3 + 0.7);
+                        r = 0.8f * pulse; g = 0.1f; b = 0.9f * pulse;
+                    } else if (isHotSpot) {
+                        // Xenon hot spots glow orange/red
+                        float pulse = (float)(Math.sin(System.currentTimeMillis() * 0.005 + gy) * 0.2 + 0.8);
+                        r = 1f * pulse; g = 0.4f * pulse; b = 0f;
                     } else if (reactorStability < 30) {
                         // Unstable - red/yellow
                         if (variation < 0.4f) { r = 1f; g = 0.2f; b = 0f; }
@@ -3688,6 +3810,11 @@ public class ChernobylGameCore {
                     }
 
                     drawHUDRect(cx + 1, cy + 1, cellSize - 2, cellSize - 2, r, g, b, 0.9f);
+
+                    // Scanned sector marker (small cyan dot in corner)
+                    if (sectorScanned && storyPhase < 8) {
+                        drawHUDRect(cx + cellSize - 5, cy + cellSize - 5, 3, 3, 0.3f, 0.9f, 1f, 0.8f);
+                    }
 
                     // Draw selection cursor
                     if (gy == selRow && gx == selCol) {
@@ -3713,7 +3840,7 @@ public class ChernobylGameCore {
         // === Sector info panel (right side) ===
         float infoX = panelX + panelW - 230;
         float infoW = 210;
-        float infoH = 200;
+        float infoH = 280;
         float infoTopY = coreCY + coreR - 20;
         drawHUDRect(infoX, infoTopY - infoH, infoW, infoH, 0.08f, 0.06f, 0.03f, 0.9f);
         drawHUDRect(infoX, infoTopY, infoW, 2, 0.6f, 0.35f, 0.1f, 0.8f);
@@ -3726,22 +3853,75 @@ public class ChernobylGameCore {
         float sectorTemp = reactorTemperature * (0.9f + sectorRand.nextFloat() * 0.2f);
         float sectorFlux = neutronFlux * (0.8f + sectorRand.nextFloat() * 0.4f);
 
+        // Compute sector xenon & void for display
+        Random scanInfoRand = new Random(selRow * 19 + selCol * 37 + (int)(reactorPower * 10));
+        float displayXenon = xenonLevel * (0.6f + scanInfoRand.nextFloat() * 0.8f);
+        float displayVoidRaw = voidCoefficient * (0.5f + scanInfoRand.nextFloat());
+        boolean selScanned = (elenaSelectedSector >= 0 && elenaSelectedSector < 324) && elenaScannedSectors[elenaSelectedSector];
+        boolean selHotSpot = selScanned && displayXenon > 40f;
+        boolean selVoid = selScanned && displayVoidRaw > 0.3f && storyPhase >= 5;
+
         drawHUDText("POWER: " + String.format("%.1f", sectorPower) + " MW", infoX + 10, infoTopY - 55, 2, 0.9f, 0.6f, 0.2f, 1f);
         drawHUDText("TEMP: " + String.format("%.0f", sectorTemp) + " C", infoX + 10, infoTopY - 75, 2, sectorTemp > 500 ? 1f : 0f, sectorTemp > 500 ? 0.3f : 0.8f, 0f, 1f);
         drawHUDText("FLUX: " + String.format("%.1f", sectorFlux), infoX + 10, infoTopY - 95, 2, 0.9f, 0.6f, 0.2f, 1f);
 
+        // Xenon level per sector (only visible after scanning)
+        if (selScanned) {
+            float xenonR = displayXenon > 40f ? 1f : 0.8f;
+            float xenonG = displayXenon > 40f ? 0.4f : 0.7f;
+            drawHUDText("XENON: " + String.format("%.0f", displayXenon) + "%", infoX + 10, infoTopY - 115, 2, xenonR, xenonG, 0.1f, 1f);
+            if (selHotSpot) {
+                drawHUDText("!! HOT SPOT !!", infoX + 10, infoTopY - 133, 2, 1f, 0.3f, 0f, 1f);
+            }
+            if (selVoid) {
+                drawHUDText("!! VOID ANOMALY !!", infoX + 10, infoTopY - 151, 2, 0.8f, 0.1f, 0.9f, 1f);
+            }
+        } else {
+            drawHUDText("XENON: [NOT SCANNED]", infoX + 10, infoTopY - 115, 2, 0.5f, 0.4f, 0.2f, 1f);
+        }
+
         // Scan result
         if (elenaScanTimer > 0) {
-            drawHUDText("SCANNING...", infoX + 10, infoTopY - 120, 2, 1f, 0.7f, 0.2f, 1f);
-        } else if (elenaScanTimer <= 0 && machineLogMessage.startsWith("SCAN")) {
+            drawHUDText("SCANNING...", infoX + 10, infoTopY - 175, 2, 1f, 0.7f, 0.2f, 1f);
+        } else if (selScanned) {
             String scanResult;
-            if (reactorStability > 70) scanResult = "SECTOR NOMINAL";
-            else if (reactorStability > 40) scanResult = "ELEVATED READINGS";
+            if (selVoid) scanResult = "VOID DANGER!";
+            else if (selHotSpot) scanResult = "XENON WARNING";
+            else if (reactorStability > 70) scanResult = "SECTOR NOMINAL";
+            else if (reactorStability > 40) scanResult = "ELEVATED";
             else scanResult = "ANOMALOUS!";
-            drawHUDText(scanResult, infoX + 10, infoTopY - 120, 2, reactorStability < 50 ? 1f : 0f, reactorStability < 50 ? 0.3f : 1f, 0f, 1f);
+            boolean danger = selVoid || selHotSpot || reactorStability < 50;
+            drawHUDText(scanResult, infoX + 10, infoTopY - 175, 2, danger ? 1f : 0f, danger ? 0.3f : 1f, danger && selVoid ? 0.9f : 0f, 1f);
         }
-        drawHUDText("L-CLICK: SCAN", infoX + 10, infoTopY - 145, 2, 0.5f, 0.38f, 0.15f, 1f);
-        drawHUDText("R-CLICK: SCAN SEL", infoX + 10, infoTopY - 165, 2, 0.5f, 0.38f, 0.15f, 1f);
+        drawHUDText("L-CLICK: SCAN", infoX + 10, infoTopY - 200, 2, 0.5f, 0.38f, 0.15f, 1f);
+        drawHUDText("R-CLICK: SCAN SEL", infoX + 10, infoTopY - 220, 2, 0.5f, 0.38f, 0.15f, 1f);
+
+        // === Scan progress panel (left side) ===
+        float spX = panelX + 15;
+        float spW = 190;
+        float spH = 160;
+        float spTopY = coreCY + coreR - 20;
+        drawHUDRect(spX, spTopY - spH, spW, spH, 0.08f, 0.06f, 0.03f, 0.9f);
+        drawHUDRect(spX, spTopY, spW, 2, 0.6f, 0.35f, 0.1f, 0.8f);
+        drawHUDText("SCAN PROGRESS", spX + 10, spTopY - 16, 2, 1f, 0.65f, 0.2f, 1f);
+        drawHUDText("SCANNED: " + elenaUniqueScanCount + "/324", spX + 10, spTopY - 38, 2, 0.8f, 0.8f, 0.6f, 1f);
+        drawHUDText("HOT SPOTS: " + elenaHotSpotsFound, spX + 10, spTopY - 58, 2,
+            elenaHotSpotsFound > 0 ? 1f : 0.6f, elenaHotSpotsFound > 0 ? 0.4f : 0.6f, 0.1f, 1f);
+        drawHUDText("VOID WARNS: " + elenaVoidSectorsFound, spX + 10, spTopY - 78, 2,
+            elenaVoidSectorsFound > 0 ? 0.8f : 0.6f, 0.1f, elenaVoidSectorsFound > 0 ? 0.9f : 0.6f, 1f);
+        // Stability bonus indicator
+        String bonusStr = String.format("+%.1f%%", elenaScanStabilityBonus);
+        drawHUDText("STAB BONUS: " + bonusStr, spX + 10, spTopY - 98, 2, 0.3f, 1f, 0.5f, 1f);
+        // Neglect penalty
+        if (elenaScanNeglectPenalty > 0) {
+            String penStr = String.format("-%.0f%%", elenaScanNeglectPenalty);
+            drawHUDText("NEGLECT: " + penStr, spX + 10, spTopY - 118, 2, 1f, 0.3f, 0.2f, 1f);
+        } else {
+            drawHUDText("NEGLECT: NONE", spX + 10, spTopY - 118, 2, 0.4f, 0.7f, 0.3f, 1f);
+        }
+        // Legend
+        drawHUDRect(spX + 10, spTopY - 145, 8, 8, 0.3f, 0.9f, 1f, 0.8f);
+        drawHUDText("= SCANNED", spX + 22, spTopY - 143, 2, 0.5f, 0.5f, 0.4f, 1f);
 
         // Readouts below core
         float infoY2 = panelY + 65;
