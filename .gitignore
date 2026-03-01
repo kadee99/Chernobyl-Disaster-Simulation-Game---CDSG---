@@ -1,0 +1,6 @@
+target/
+*.class
+.tools/
+*.jar
+*.bak
+.vscode/
