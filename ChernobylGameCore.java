@@ -132,7 +132,7 @@ public class ChernobylGameCore {
     private String[] dialogueLines = {};
     private String dialogueSpeaker = "";
     private int dialoguePage = 0;
-    private boolean eKeyPressed = false;
+    private boolean tKeyPressed = false;
     private boolean enterKeyPressed = false;
     private String nearbyNPCName = ""; // NPC player is close to
     private static final float NPC_INTERACT_DISTANCE = 200f;
@@ -1865,15 +1865,15 @@ public class ChernobylGameCore {
                     "TOPTUNOV - REACTOR OPERATOR (NERVOUS)",
                     "DYATLOV - DEPUTY CHIEF ENGINEER (DEMANDING)",
                     "",
-                    "APPROACH AN ENGINEER AND PRESS E TO TALK.",
+                    "APPROACH AN ENGINEER AND PRESS T TO TALK.",
                     "THEY WILL GIVE YOU STORY HINTS AND INSTRUCTIONS.",
-                    "PRESS E OR ENTER TO ADVANCE DIALOGUE."
+                    "PRESS T OR ENTER TO ADVANCE DIALOGUE."
                 };
                 break;
             case 4:
                 title = "CONTROL PANEL";
                 lines = new String[]{
-                    "WALK TO THE CONTROL PANEL AND LEFT CLICK TO OPEN.",
+                    "WALK TO THE CONTROL PANEL AND PRESS E TO OPEN.",
                     "",
                     "HOVER OVER CONTROLS WITH YOUR MOUSE.",
                     "LEFT-CLICK TO DECREASE OR TURN OFF.",
@@ -1881,13 +1881,13 @@ public class ChernobylGameCore {
                     "",
                     "CONTROLS: RODS / COOLANT / PUMPS / TURBINE",
                     "THE AZ-5 EMERGENCY BUTTON APPEARS WHEN NEEDED.",
-                    "PRESS ESC OR RIGHT CLICK TO CLOSE."
+                    "PRESS ESC OR RIGHT-CLICK TO CLOSE."
                 };
                 break;
             case 5:
                 title = "ELENA DISPLAY";
                 lines = new String[]{
-                    "WALK TO THE ELENA DISPLAY AND LEFT CLICK TO OPEN.",
+                    "WALK TO THE ELENA DISPLAY AND PRESS E TO OPEN.",
                     "",
                     "ELENA SHOWS THE REACTOR CORE MAP WITH A GRID",
                     "OF FUEL CHANNELS. EACH CELL SHOWS LOCAL POWER.",
@@ -1990,12 +1990,12 @@ public class ChernobylGameCore {
                 break;
             case 4:
                 storyTime = "26 APRIL 1986 - 00:28";
-                currentObjective = "WARNING! TALK TO AKIMOV (PRESS E) ABOUT THE XENON CRISIS!";
-                showNotification("XENON CRISIS CONFIRMED ON ELENA! FIND AKIMOV AND PRESS E!");
+                currentObjective = "WARNING! TALK TO AKIMOV (PRESS T) ABOUT THE XENON CRISIS!";
+                showNotification("XENON CRISIS CONFIRMED ON ELENA! FIND AKIMOV AND PRESS T!");
                 break;
             case 5:
                 storyTime = "26 APRIL 1986 - 00:43";
-                currentObjective = "CLICK PANEL - LEFT-CLICK RODS TO WITHDRAW - RAISE POWER ABOVE 400";
+                currentObjective = "OPEN PANEL (E) - LEFT-CLICK RODS TO WITHDRAW - RAISE POWER ABOVE 400";
                 showNotification("DYATLOV ORDERS: WITHDRAW RODS (LEFT-CLICK/LEFT ARROW) TO RAISE POWER!");
                 break;
             case 6:
@@ -2080,13 +2080,13 @@ public class ChernobylGameCore {
                     return new String[]{
                         "Why are you standing around? Go to",
                         "the control panel and begin the",
-                        "power reduction! Click near it.",
+                        "power reduction! Press E near it.",
                         "We do not have all night."
                     };
                 } else {
                     return new String[]{
                         "The control panel is ahead of you.",
-                        "Click when near it to interact.",
+                        "Press E when near it to interact.",
                         "We need to lower the reactor power."
                     };
                 }
@@ -2098,7 +2098,7 @@ public class ChernobylGameCore {
                         "",
                         "Before we proceed, go check the",
                         "INDICATOR PANELS on the RIGHT WALL.",
-                        "Click when you are near them.",
+                        "Press E when you are near them.",
                         "",
                         "We need to verify the readings",
                         "match what the control panel shows.",
@@ -2107,7 +2107,7 @@ public class ChernobylGameCore {
                 } else if (npcName.equals("Akimov")) {
                     return new String[]{
                         "Check the indicator panels on the",
-                        "right wall. Click to read them.",
+                        "right wall. Press E to read them.",
                         "We must verify reactor parameters",
                         "before continuing the test."
                     };
@@ -2115,7 +2115,7 @@ public class ChernobylGameCore {
                     return new String[]{
                         "Akimov wants you to verify the",
                         "indicator readings. The panels",
-                        "are on the right wall. Click them."
+                        "are on the right wall. Press E."
                     };
                 }
             case 3:
@@ -2125,7 +2125,7 @@ public class ChernobylGameCore {
                         "Good, the indicators check out.",
                         "",
                         "Now we need to check the ELENA",
-                        "display. Walk to it and click.",
+                        "display. Walk to it and press E.",
                         "",
                         "ELENA shows the neutron flux in",
                         "each sector of the core. Scan at",
@@ -2144,7 +2144,7 @@ public class ChernobylGameCore {
                 } else {
                     return new String[]{
                         "ELENA is the large display near",
-                        "the back wall. Click to open it",
+                        "the back wall. Press E to open it",
                         "and click sectors to scan them."
                     };
                 }
@@ -2163,7 +2163,7 @@ public class ChernobylGameCore {
                         "Power has collapsed to almost zero.",
                         "",
                         "Dyatlov demands we raise power NOW.",
-                        "Go to the CONTROL PANEL (click).",
+                        "Go to the CONTROL PANEL (press E).",
                         "LEFT-CLICK rods to WITHDRAW them.",
                         "",
                         "We need power back ABOVE 400 MW!",
@@ -2195,7 +2195,7 @@ public class ChernobylGameCore {
                         "Xenon-135 has poisoned the reactor.",
                         "Dyatlov demands we raise the power.",
                         "",
-                        "Open the CONTROL PANEL (click) and",
+                        "Open the CONTROL PANEL (press E) and",
                         "LEFT-CLICK rods to WITHDRAW them.",
                         "We need power above 400 MW!",
                         "",
@@ -2514,9 +2514,9 @@ public class ChernobylGameCore {
             }
         }
 
-        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
-            if (!eKeyPressed) {
-                eKeyPressed = true;
+        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
+            if (!tKeyPressed) {
+                tKeyPressed = true;
                 if (!dialogueActive && showInteractPrompt && !nearbyNPCName.isEmpty()) {
                     dialogueLines = getDialogueForNPC(nearbyNPCName);
                     dialogueSpeaker = nearbyNPCName.toUpperCase();
@@ -2527,7 +2527,7 @@ public class ChernobylGameCore {
                 }
             }
         } else {
-            eKeyPressed = false;
+            tKeyPressed = false;
         }
 
         if (glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS) {
@@ -2638,7 +2638,7 @@ public class ChernobylGameCore {
 
         // Interact prompt
         if (showInteractPrompt && !dialogueActive) {
-            String prompt = "PRESS E TO TALK TO " + nearbyNPCName.toUpperCase();
+            String prompt = "PRESS T TO TALK TO " + nearbyNPCName.toUpperCase();
             float promptW = prompt.length() * 10 + 30;
             float promptX = (screenW - promptW) / 2;
             drawHUDRect(promptX, 55, promptW, 35, 0f, 0f, 0f, 0.6f);
@@ -2720,7 +2720,7 @@ public class ChernobylGameCore {
 
             // Continue prompt
             int totalPages = (dialogueLines.length + linesPerPage - 1) / linesPerPage;
-            String contText = (dialoguePage < totalPages - 1) ? "PRESS E OR ENTER TO CONTINUE..." : "PRESS E OR ENTER TO CLOSE";
+            String contText = (dialoguePage < totalPages - 1) ? "PRESS T OR ENTER TO CONTINUE..." : "PRESS T OR ENTER TO CLOSE";
             drawHUDText(contText, boxX + 20, boxY + 10, 2, 0.6f, 0.45f, 0.2f, 1f);
         }
 
@@ -2967,6 +2967,8 @@ public class ChernobylGameCore {
                     // Re-capture mouse for FPS controls
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                     firstMouse = true;
+                    // Prevent ESC from also triggering pause menu on same frame
+                    menuEscHeld = true;
                 }
             } else {
                 escKeyPressed = false;
@@ -3231,9 +3233,9 @@ public class ChernobylGameCore {
             nearbyMachine = "INDICATOR_PANEL";
         }
 
-        // Left click to open machine
+        // Press E to open machine
         if (!nearbyMachine.isEmpty() && !dialogueActive) {
-            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
                 if (!xKeyPressed) {
                     xKeyPressed = true;
                     if (nearbyMachine.equals("INDICATOR_PANEL")) {
@@ -3298,7 +3300,7 @@ public class ChernobylGameCore {
         if (!nearbyMachine.isEmpty() && !machineUIActive && !dialogueActive) {
             String machineName = nearbyMachine.equals("CONTROL_PANEL") ? "CONTROL PANEL" : 
                                  nearbyMachine.equals("ELENA") ? "ELENA DISPLAY" : "INDICATOR PANELS";
-            String prompt = "LEFT CLICK TO " + (nearbyMachine.equals("INDICATOR_PANEL") ? "READ " : "OPEN ") + machineName;
+            String prompt = "PRESS E TO " + (nearbyMachine.equals("INDICATOR_PANEL") ? "READ " : "OPEN ") + machineName;
             float promptW = prompt.length() * 10 + 30;
             float promptX = (screenW - promptW) / 2;
             drawHUDRect(promptX, 100, promptW, 35, 0f, 0f, 0f, 0.6f);
@@ -7342,19 +7344,9 @@ public class ChernobylGameCore {
         }
         if (radiationFlashTimer > 0f) radiationFlashTimer -= deltaTime;
 
-        // ESC key: toggle cursor capture (replaces old callback in ChernobylGame.java)
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            if (!menuEscHeld && !machineUIActive) {
-                menuEscHeld = true;
-                int cursorMode = glfwGetInputMode(window, GLFW_CURSOR);
-                if (cursorMode == GLFW_CURSOR_DISABLED) {
-                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-                } else {
-                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                    firstMouse = true;
-                }
-            }
-        } else {
+        // ESC key: only used to close panels/machine UI (handled in updateMachineInteraction)
+        // Reset menuEscHeld when ESC is released so machine UI close works properly
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS) {
             if (!machineUIActive) menuEscHeld = false;
         }
 
@@ -7604,11 +7596,6 @@ public class ChernobylGameCore {
             vKeyPressed = false;
         }
         
-        // Escape key exits fullscreen
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS && isFullscreen) {
-            toggleFullscreen(window);
-        }
-        
         // Update view matrix
         // Calculate screen shake offset based on reactor state
         screenShakeTimer += deltaTime;
@@ -7658,6 +7645,9 @@ public class ChernobylGameCore {
     
     // Toggle fullscreen mode
     private void toggleFullscreen(long window) {
+        // Remember current cursor mode so we can restore it after the switch
+        int prevCursorMode = glfwGetInputMode(window, GLFW_CURSOR);
+
         if (!isFullscreen) {
             // Save windowed position and size
             int[] xpos = new int[1], ypos = new int[1];
@@ -7685,6 +7675,10 @@ public class ChernobylGameCore {
             projection.setPerspective((float) Math.toRadians(70), (float) windowedWidth / windowedHeight, 0.1f, 10000f);
             isFullscreen = false;
         }
+
+        // Restore cursor mode so fullscreen toggle never leaks the cursor
+        glfwSetInputMode(window, GLFW_CURSOR, prevCursorMode);
+        firstMouse = true;
     }
     
     // Collision detection - returns true if position collides with walls or objects
