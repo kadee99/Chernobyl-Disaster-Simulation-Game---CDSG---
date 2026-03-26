@@ -14,12 +14,14 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 
@@ -110,6 +112,10 @@ public class ChernobylGameCore {
     // Constants
     private static final float BLOCK_SIZE = 50f;
     private static final int ROOM_SIZE = 10;
+    private static final int CONTROL_ROOM_WINDOW_START_H = 1;
+    private static final int CONTROL_ROOM_WINDOW_END_H = 4;
+    private static final float CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y = CONTROL_ROOM_WINDOW_START_H * BLOCK_SIZE;
+    private static final float CONTROL_ROOM_WINDOW_TOP_WORLD_Y = CONTROL_ROOM_WINDOW_END_H * BLOCK_SIZE;
     
     // Collision constants
     private static final float PLAYER_RADIUS = 30f;  // Player collision radius
@@ -140,7 +146,6 @@ public class ChernobylGameCore {
     private static final float WALKWAY_X_MIN = -20 * BLOCK_SIZE;
     private static final float WALKWAY_X_MAX = -18 * BLOCK_SIZE;
     private static final float WALKWAY_Z_START = -42 * BLOCK_SIZE;
-    private static final float WALKWAY_Z_END = -12 * BLOCK_SIZE; // Meets reactor hall side wall
     private static final float PUMP_WALKWAY_X_MIN = 18 * BLOCK_SIZE;
     private static final float PUMP_WALKWAY_X_MAX = 20 * BLOCK_SIZE;
     private static final float PUMP_WALKWAY_INNER_WALL = PUMP_WALKWAY_X_MIN - BLOCK_SIZE; // 17 * BS
@@ -157,7 +162,44 @@ public class ChernobylGameCore {
     private static final float PUMP_CONSOLE_X = (PUMP_ANNEX_MIN_X + PUMP_ANNEX_MAX_X) * 0.5f;
     private static final float PUMP_CONSOLE_Z = PUMP_ANNEX_MAX_Z - BLOCK_SIZE * 2.5f;
     private static final float REACTOR_HALL_FLOOR_Y = -180f; // Existing reactor hall floor
+    private static final int REACTOR_HALL_BASE_HEIGHT_BLOCKS = 8;
+    private static final float REACTOR_HALL_HEIGHT_SCALE = 2.5f;
+    private static final int REACTOR_HALL_WIDTH_BLOCKS = 42;
+    private static final int REACTOR_HALL_DEPTH_BLOCKS = 24;
+    private static final float REACTOR_HALL_MEZZANINE_RATIO = 0.55f;
+    private static final int REACTOR_HALL_CATWALK_WIDTH_BLOCKS = 2;
+    private static final int REACTOR_HALL_TALL_HEIGHT_BLOCKS = Math.round(REACTOR_HALL_BASE_HEIGHT_BLOCKS * REACTOR_HALL_HEIGHT_SCALE);
+    private static final float REACTOR_HALL_MEZZANINE_Y = REACTOR_HALL_FLOOR_Y + REACTOR_HALL_TALL_HEIGHT_BLOCKS * BLOCK_SIZE * REACTOR_HALL_MEZZANINE_RATIO;
+    private static final float REACTOR_HALL_WINDOW_X = -17 * BLOCK_SIZE;
+    private static final float REACTOR_HALL_FAR_X = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS - 1) * BLOCK_SIZE;
+    private static final float REACTOR_HALL_FRONT_Z = REACTOR_HALL_DEPTH_BLOCKS * BLOCK_SIZE;
+    private static final float REACTOR_HALL_BACK_Z = -REACTOR_HALL_FRONT_Z;
+    private static final float REACTOR_HALL_WALL_MARGIN = BLOCK_SIZE * 0.02f;
+    private static final int REACTOR_HALL_STAIRS_STEPS = 14;
+    private static final float REACTOR_HALL_STAIRS_WIDTH = BLOCK_SIZE * 1.6f;
+    private static final float REACTOR_HALL_STAIRS_RUN = BLOCK_SIZE * 0.85f;
+    private static final float REACTOR_HALL_STAIRS_BASE_X = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS - 5) * BLOCK_SIZE;
+    private static final float REACTOR_HALL_STAIRS_BASE_Z = (REACTOR_HALL_DEPTH_BLOCKS - (REACTOR_HALL_CATWALK_WIDTH_BLOCKS * 0.5f)) * BLOCK_SIZE;
+    private static final float REACTOR_HALL_STAIRS_BASE_Y = REACTOR_HALL_FLOOR_Y + BLOCK_SIZE * 0.2f;
+    private static final float REACTOR_CORE_CENTER_X = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS * 0.5f) * BLOCK_SIZE;
+    private static final float REACTOR_CORE_CENTER_Z = 0f;
+    private static final int REACTOR_GUARD_RADIUS_BLOCKS = 12 + 6;
+    private static final float REACTOR_FENCE_RADIUS = REACTOR_GUARD_RADIUS_BLOCKS * BLOCK_SIZE * 0.8f;
+    private static final float REACTOR_FENCE_MARGIN = BLOCK_SIZE * 0.04f;
     private boolean reactorHallDoorOpen = false;       // Door state
+    private static final boolean DEV_CREATIVE_MODE_ENABLED = true;
+    private static final float CREATIVE_RAY_DISTANCE = 12f * BLOCK_SIZE;
+    private static final float CREATIVE_SNAP_STEP = BLOCK_SIZE / 2f;
+    private static final String CREATIVE_SAVE_FILE = "creative_edits.txt";
+    private static final String[] CREATIVE_PALETTE = new String[] {
+        "reactor_wall_white",
+        "soviet_gray_wall",
+        "gray_concrete",
+        "reactor_floor_metal",
+        "light_blue_concrete",
+        "oak_planks",
+        "fluorescent_light"
+    };
 
     // === STORY SYSTEM ===
     private int storyPhase = 0; // 0=intro, 1=talk to akimov, 2=go to toptunov, 3=test begins, etc.
@@ -189,6 +231,17 @@ public class ChernobylGameCore {
     // E-key prompt
     private boolean showInteractPrompt = false;
     private boolean showDebugGPSOverlay = true; // Temporary on-screen GPS readout
+    private boolean creativeMode = false;
+    private boolean creativeTogglePressed = false;
+    private boolean creativePlacePressed = false;
+    private boolean creativeBreakPressed = false;
+    private boolean creativeClearPressed = false;
+    private boolean creativeNextPressed = false;
+    private boolean creativePrevPressed = false;
+    private int creativePaletteIndex = 0;
+    private List<TexturedGameObject> creativeBlocks = new ArrayList<>();
+    private List<CreativePlacement> savedPlacements = new ArrayList<>();
+    private List<CreativeRemoval> savedRemovals = new ArrayList<>();
 
     // === MACHINE INTERACTION SYSTEM (Phase 2) ===
     private boolean machineUIActive = false;
@@ -403,6 +456,7 @@ public class ChernobylGameCore {
         // Build the scene with textures
         buildControlRoom();
         // buildReactorRoom(); // Disabled - reactor room removed
+        loadCreativeEdits();
         
         // Setup projection matrix
         float aspectRatio = (float) ChernobylGame.WIDTH / ChernobylGame.HEIGHT;
@@ -562,26 +616,32 @@ public class ChernobylGameCore {
             new Vector3f(0, legHeight + bodyHeight + headSize/2, 0),
             new Vector3f(headSize, headSize, headSize),
             blockTextures.get("player_head"), false);
+        playerHead.textureName = "player_head";
         playerBody = new TexturedGameObject(texturedCubeMesh,
             new Vector3f(0, legHeight + bodyHeight/2, 0),
             new Vector3f(bodyWidth, bodyHeight, bodyWidth * 0.5f),
             blockTextures.get("player_body"), false);
+        playerBody.textureName = "player_body";
         playerLeftLeg = new TexturedGameObject(texturedCubeMesh,
             new Vector3f(-legWidth * 0.6f, legHeight/2, 0),
             new Vector3f(legWidth, legHeight, legWidth),
             blockTextures.get("player_legs"), false);
+        playerLeftLeg.textureName = "player_legs";
         playerRightLeg = new TexturedGameObject(texturedCubeMesh,
             new Vector3f(legWidth * 0.6f, legHeight/2, 0),
             new Vector3f(legWidth, legHeight, legWidth),
             blockTextures.get("player_legs"), false);
+        playerRightLeg.textureName = "player_legs";
         playerLeftArm = new TexturedGameObject(texturedCubeMesh,
             new Vector3f(-bodyWidth/2 - armWidth/2, legHeight + bodyHeight/2, 0),
             new Vector3f(armWidth, armHeight, armWidth),
             blockTextures.get("player_arms"), false);
+        playerLeftArm.textureName = "player_arms";
         playerRightArm = new TexturedGameObject(texturedCubeMesh,
             new Vector3f(bodyWidth/2 + armWidth/2, legHeight + bodyHeight/2, 0),
             new Vector3f(armWidth, armHeight, armWidth),
             blockTextures.get("player_arms"), false);
+        playerRightArm.textureName = "player_arms";
     }
 
     private void createHUDResources() {
@@ -3109,26 +3169,176 @@ public class ChernobylGameCore {
             drawHUDText(contText, boxX + 20, boxY + 10, 2, 0.6f, 0.45f, 0.2f, 1f);
         }
 
+        if (creativeMode && DEV_CREATIVE_MODE_ENABLED) {
+            String blockLabel = CREATIVE_PALETTE[Math.max(0, Math.min(CREATIVE_PALETTE.length - 1, creativePaletteIndex))].replace('_', ' ').toUpperCase();
+            String tip = "Creative (" + blockLabel + "): B place | N remove | Backspace clear | [ ] cycle | C exit";
+            float tipW = tip.length() * 8f + 30f;
+            float tipX = screenW - tipW - 20f;
+            float tipY = 30f;
+            drawHUDRect(tipX, tipY, tipW, 32f, 0f, 0f, 0f, 0.55f);
+            drawHUDText(tip, tipX + 12f, tipY + 10f, 2, 0.7f, 1f, 0.8f, 1f);
+        }
+
         // Restore state
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
     }
 
+    private void handleCreativeBuildControls(long window, Vector3f direction) {
+        if (!creativeMode || !DEV_CREATIVE_MODE_ENABLED) {
+            creativePlacePressed = false;
+            creativeBreakPressed = false;
+            creativeClearPressed = false;
+            creativeNextPressed = false;
+            creativePrevPressed = false;
+            return;
+        }
+
+        CreativeHit hit = pickBlockOnRay(direction, CREATIVE_RAY_DISTANCE);
+        Vector3f fallbackTarget = computeCreativeTarget(direction);
+
+        if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
+            if (!creativeNextPressed) {
+                creativeNextPressed = true;
+                creativePaletteIndex = (creativePaletteIndex + 1) % CREATIVE_PALETTE.length;
+                notificationText = "Creative block: " + CREATIVE_PALETTE[creativePaletteIndex];
+                notificationTimer = 1.2f;
+            }
+        } else {
+            creativeNextPressed = false;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS) {
+            if (!creativePrevPressed) {
+                creativePrevPressed = true;
+                creativePaletteIndex = (creativePaletteIndex - 1 + CREATIVE_PALETTE.length) % CREATIVE_PALETTE.length;
+                notificationText = "Creative block: " + CREATIVE_PALETTE[creativePaletteIndex];
+                notificationTimer = 1.2f;
+            }
+        } else {
+            creativePrevPressed = false;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+            if (!creativePlacePressed) {
+                creativePlacePressed = true;
+                Vector3f placement = null;
+                if (hit != null && hit.point != null && hit.normal != null && hit.normal.lengthSquared() > 0.0001f) {
+                    placement = new Vector3f(hit.point).add(new Vector3f(hit.normal).normalize().mul(BLOCK_SIZE * 0.5f));
+                } else {
+                    placement = fallbackTarget;
+                }
+                placement = snapToCreativeGrid(placement);
+                String tex = CREATIVE_PALETTE[Math.max(0, Math.min(CREATIVE_PALETTE.length - 1, creativePaletteIndex))];
+                if (placeCreativeBlock(placement, tex)) {
+                    notificationText = String.format(Locale.US,
+                        "Placed %s at (%.1f, %.1f, %.1f)", tex, placement.x, placement.y, placement.z);
+                } else {
+                    notificationText = "No valid spot for creative block";
+                }
+                notificationTimer = 1.5f;
+            }
+        } else {
+            creativePlacePressed = false;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
+            if (!creativeBreakPressed) {
+                creativeBreakPressed = true;
+                TexturedGameObject block = (hit != null) ? hit.block : findCreativeBlockAt(fallbackTarget);
+                if (block != null && removeBlock(block)) {
+                    notificationText = block.isCreativeBlock ? "Removed creative block" : "Removed structural block";
+                } else {
+                    notificationText = "No block to remove";
+                }
+                notificationTimer = 1.2f;
+            }
+        } else {
+            creativeBreakPressed = false;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_BACKSPACE) == GLFW_PRESS) {
+            if (!creativeClearPressed) {
+                creativeClearPressed = true;
+                int cleared = clearCreativeBlocks();
+                notificationText = cleared > 0 ? ("Cleared " + cleared + " creative blocks") : "No creative blocks to clear";
+                notificationTimer = 1.2f;
+            }
+        } else {
+            creativeClearPressed = false;
+        }
+    }
+
+    private Vector3f computeCreativeTarget(Vector3f direction) {
+        if (direction == null) return null;
+        Vector3f norm = new Vector3f(direction);
+        if (norm.lengthSquared() < 0.0001f) {
+            norm.set(0, 0, -1);
+        }
+        norm.normalize();
+        Vector3f target = new Vector3f(cameraPos).add(norm.mul(CREATIVE_RAY_DISTANCE));
+        return snapToCreativeGrid(target);
+    }
+
+    private Vector3f snapToCreativeGrid(Vector3f point) {
+        if (point == null) return null;
+        float snappedX = snapToStep(point.x, CREATIVE_SNAP_STEP);
+        float snappedY = snapToStep(point.y, CREATIVE_SNAP_STEP);
+        float snappedZ = snapToStep(point.z, CREATIVE_SNAP_STEP);
+        return new Vector3f(snappedX, snappedY, snappedZ);
+    }
+
+    private float snapToStep(float value, float step) {
+        return (float) Math.round(value / step) * step;
+    }
+
+    private boolean placeCreativeBlock(Vector3f target, String textureName) {
+        if (target == null || textureName == null || textureName.isEmpty()) return false;
+        if (findCreativeBlockAt(target) != null) return false;
+        TexturedGameObject placed = addTexturedCubeAndReturn(target.x, target.y, target.z,
+            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, textureName);
+        placed.isCreativeBlock = true;
+        creativeBlocks.add(placed);
+        savedPlacements.add(new CreativePlacement(textureName, target));
+        saveCreativeEdits();
+        return true;
+    }
+
+    private int clearCreativeBlocks() {
+        int count = creativeBlocks.size();
+        if (count == 0) return 0;
+        for (TexturedGameObject block : new ArrayList<>(creativeBlocks)) {
+            texturedObjects.remove(block);
+        }
+        creativeBlocks.clear();
+        savedPlacements.clear();
+        saveCreativeEdits();
+        return count;
+    }
+
+    private boolean isSameCreativeCell(Vector3f a, Vector3f b) {
+        if (a == null || b == null) return false;
+        float tol = CREATIVE_SNAP_STEP * 0.4f;
+        return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol && Math.abs(a.z - b.z) <= tol;
+    }
+
     private String describePlayerLocation(float px, float pz) {
         float BS = BLOCK_SIZE;
+        float hallEntranceZWorld = -REACTOR_HALL_DEPTH_BLOCKS * BS;
+        float hallPositiveZWorld = REACTOR_HALL_DEPTH_BLOCKS * BS;
         if (pz >= CORRIDOR_START_Z) {
             return "Control Room";
         }
         if (px <= PUMP_ANNEX_MAX_X && px >= PUMP_ANNEX_MIN_X && pz >= PUMP_ANNEX_MIN_Z && pz <= PUMP_ANNEX_MAX_Z) {
             return "Pump Annex";
         }
-        if (px <= -17 * BS && px >= -21 * BS && pz >= -46 * BS && pz <= -12 * BS) {
+        if (px <= -17 * BS && px >= -21 * BS && pz >= -46 * BS && pz <= hallEntranceZWorld) {
             return "Reactor Walkway";
         }
-        if (px >= PUMP_WALKWAY_INNER_WALL && px <= PUMP_WALKWAY_OUTER_WALL && pz >= -46 * BS && pz <= -12 * BS) {
+        if (px >= PUMP_WALKWAY_INNER_WALL && px <= PUMP_WALKWAY_OUTER_WALL && pz >= -46 * BS && pz <= hallEntranceZWorld) {
             return "Pump Walkway";
         }
-        if (px <= -17 * BS && pz >= -12 * BS && pz <= 12 * BS) {
+        if (px <= -17 * BS && pz >= hallEntranceZWorld && pz <= hallPositiveZWorld) {
             return "Reactor Hall";
         }
         if (pZInRange(pz, -46, -42) && px >= (CORRIDOR_HALF_WIDTH + BS) && px < PUMP_WALKWAY_INNER_WALL) {
@@ -3189,6 +3399,265 @@ public class ChernobylGameCore {
             }
             cursorX += charW + spacing;
         }
+    }
+
+    private void loadCreativeEdits() {
+        creativeBlocks.clear();
+        savedPlacements.clear();
+        savedRemovals.clear();
+        Path savePath = Paths.get(CREATIVE_SAVE_FILE);
+        if (!Files.exists(savePath)) {
+            return;
+        }
+        try {
+            List<String> lines = Files.readAllLines(savePath, StandardCharsets.UTF_8);
+            for (String rawLine : lines) {
+                if (rawLine == null) continue;
+                String line = rawLine.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] parts = line.split("\\s+");
+                if (parts.length == 0) continue;
+                if (parts[0].equalsIgnoreCase("PLACE") && parts.length >= 5) {
+                    try {
+                        String tex = parts[1];
+                        float x = Float.parseFloat(parts[2]);
+                        float y = Float.parseFloat(parts[3]);
+                        float z = Float.parseFloat(parts[4]);
+                        CreativePlacement placement = new CreativePlacement(tex, new Vector3f(x, y, z));
+                        savedPlacements.add(placement);
+                        spawnCreativeBlockFromSave(tex, new Vector3f(x, y, z));
+                    } catch (NumberFormatException ignore) {
+                        System.err.println("[CREATIVE] Invalid PLACE entry: " + line);
+                    }
+                } else if (parts[0].equalsIgnoreCase("REMOVE") && parts.length >= 7) {
+                    try {
+                        float x = Float.parseFloat(parts[1]);
+                        float y = Float.parseFloat(parts[2]);
+                        float z = Float.parseFloat(parts[3]);
+                        float sx = Float.parseFloat(parts[4]);
+                        float sy = Float.parseFloat(parts[5]);
+                        float sz = Float.parseFloat(parts[6]);
+                        savedRemovals.add(new CreativeRemoval(new Vector3f(x, y, z), new Vector3f(sx, sy, sz)));
+                    } catch (NumberFormatException ignore) {
+                        System.err.println("[CREATIVE] Invalid REMOVE entry: " + line);
+                    }
+                }
+            }
+            applySavedRemovals();
+        } catch (IOException ex) {
+            System.err.println("[CREATIVE] Failed to read edits: " + ex.getMessage());
+        }
+    }
+
+    private void spawnCreativeBlockFromSave(String textureName, Vector3f position) {
+        TexturedGameObject obj = addTexturedCubeAndReturn(position.x, position.y, position.z,
+            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, textureName);
+        obj.isCreativeBlock = true;
+        creativeBlocks.add(obj);
+    }
+
+    private void applySavedRemovals() {
+        if (savedRemovals.isEmpty()) return;
+        List<TexturedGameObject> toCull = new ArrayList<>();
+        for (CreativeRemoval removal : savedRemovals) {
+            TexturedGameObject victim = findBlockByTransform(removal.position, removal.scale);
+            if (victim != null) {
+                toCull.add(victim);
+            }
+        }
+        texturedObjects.removeAll(toCull);
+    }
+
+    private TexturedGameObject findBlockByTransform(Vector3f position, Vector3f scale) {
+        float posTol = CREATIVE_SNAP_STEP * 0.25f;
+        float scaleTol = BLOCK_SIZE * 0.1f;
+        for (TexturedGameObject obj : texturedObjects) {
+            if (obj == null || obj.isNPCPart) continue;
+            if (Math.abs(obj.position.x - position.x) <= posTol &&
+                Math.abs(obj.position.y - position.y) <= posTol &&
+                Math.abs(obj.position.z - position.z) <= posTol &&
+                Math.abs(obj.scale.x - scale.x) <= scaleTol &&
+                Math.abs(obj.scale.y - scale.y) <= scaleTol &&
+                Math.abs(obj.scale.z - scale.z) <= scaleTol) {
+                return obj;
+            }
+        }
+        return null;
+    }
+
+    private void saveCreativeEdits() {
+        if (!DEV_CREATIVE_MODE_ENABLED) return;
+        Path savePath = Paths.get(CREATIVE_SAVE_FILE);
+        List<String> out = new ArrayList<>();
+        out.add("# Creative edit log for corridor tuning - auto generated");
+        for (CreativePlacement placement : savedPlacements) {
+            out.add(String.format(Locale.US, "PLACE %s %.3f %.3f %.3f",
+                placement.textureName,
+                placement.position.x,
+                placement.position.y,
+                placement.position.z));
+        }
+        for (CreativeRemoval removal : savedRemovals) {
+            out.add(String.format(Locale.US, "REMOVE %.3f %.3f %.3f %.3f %.3f %.3f",
+                removal.position.x,
+                removal.position.y,
+                removal.position.z,
+                removal.scale.x,
+                removal.scale.y,
+                removal.scale.z));
+        }
+        try {
+            Files.write(savePath, out, StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            System.err.println("[CREATIVE] Failed to write edits: " + ex.getMessage());
+        }
+    }
+
+    private CreativeHit pickBlockOnRay(Vector3f direction, float maxDistance) {
+        if (direction == null || maxDistance <= 0f) return null;
+        Vector3f dir = new Vector3f(direction);
+        if (dir.lengthSquared() < 0.0001f) return null;
+        dir.normalize();
+        Vector3f origin = new Vector3f(cameraPos);
+        CreativeHit bestHit = null;
+        float bestDistance = maxDistance;
+        for (TexturedGameObject obj : texturedObjects) {
+            if (obj == null || obj.isNPCPart) continue;
+            CreativeHit hit = intersectRayWithBlock(origin, dir, obj, maxDistance);
+            if (hit != null && hit.distance < bestDistance) {
+                bestDistance = hit.distance;
+                bestHit = hit;
+            }
+        }
+        return bestHit;
+    }
+
+    private CreativeHit intersectRayWithBlock(Vector3f origin, Vector3f dir, TexturedGameObject obj, float maxDistance) {
+        float halfX = obj.scale.x * 0.5f;
+        float halfY = obj.scale.y * 0.5f;
+        float halfZ = obj.scale.z * 0.5f;
+        float minX = obj.position.x - halfX;
+        float maxX = obj.position.x + halfX;
+        float minY = obj.position.y - halfY;
+        float maxY = obj.position.y + halfY;
+        float minZ = obj.position.z - halfZ;
+        float maxZ = obj.position.z + halfZ;
+        float tMin = 0f;
+        float tMax = maxDistance;
+        Vector3f hitNormal = new Vector3f();
+        float[] bounds = tempBounds;
+        bounds[0] = tMin;
+        bounds[1] = tMax;
+        if (!axisIntersect(origin.x, dir.x, minX, maxX, 0, hitNormal, bounds)) return null;
+        tMin = bounds[0];
+        tMax = bounds[1];
+        if (!axisIntersect(origin.y, dir.y, minY, maxY, 1, hitNormal, bounds)) return null;
+        tMin = bounds[0];
+        tMax = bounds[1];
+        if (!axisIntersect(origin.z, dir.z, minZ, maxZ, 2, hitNormal, bounds)) return null;
+        tMin = bounds[0];
+        if (tMin < 0f) {
+            if (tMax < 0f) return null;
+            tMin = tMax;
+        }
+        if (tMin > maxDistance) return null;
+        Vector3f hitPoint = new Vector3f(dir).mul(tMin).add(origin);
+        return new CreativeHit(obj, hitPoint, new Vector3f(hitNormal), tMin);
+    }
+
+    private float[] tempBounds = new float[2];
+
+    private boolean axisIntersect(float origin, float dir, float min, float max, int axis,
+                                  Vector3f normalOut, float[] bounds) {
+        float tMin = bounds[0];
+        float tMax = bounds[1];
+        float EPS = 1e-4f;
+        if (Math.abs(dir) < EPS) {
+            if (origin < min || origin > max) {
+                return false;
+            }
+            bounds[0] = tMin;
+            bounds[1] = tMax;
+            return true;
+        }
+        float inv = 1f / dir;
+        float t1 = (min - origin) * inv;
+        float t2 = (max - origin) * inv;
+        if (t1 > t2) {
+            float tmp = t1;
+            t1 = t2;
+            t2 = tmp;
+        }
+        if (t1 > tMin) {
+            tMin = t1;
+            normalOut.set(0f, 0f, 0f);
+            float sign = (dir > 0f) ? -1f : 1f;
+            if (axis == 0) normalOut.x = sign;
+            else if (axis == 1) normalOut.y = sign;
+            else normalOut.z = sign;
+        }
+        if (t2 < tMax) {
+            tMax = t2;
+        }
+        if (tMax < tMin) {
+            return false;
+        }
+        bounds[0] = tMin;
+        bounds[1] = tMax;
+        return true;
+    }
+
+    private boolean removeBlock(TexturedGameObject block) {
+        if (block == null || block.isNPCPart) return false;
+        boolean removed = texturedObjects.remove(block);
+        if (!removed) return false;
+        creativeBlocks.remove(block);
+        if (block.isCreativeBlock) {
+            removePlacementEntry(block.position);
+        } else {
+            if (!removalExists(block.position, block.scale)) {
+                savedRemovals.add(new CreativeRemoval(block.position, block.scale));
+            }
+        }
+        saveCreativeEdits();
+        return true;
+    }
+
+    private boolean removalExists(Vector3f position, Vector3f scale) {
+        float tol = CREATIVE_SNAP_STEP * 0.25f;
+        float scaleTol = BLOCK_SIZE * 0.1f;
+        for (CreativeRemoval removal : savedRemovals) {
+            if (Math.abs(removal.position.x - position.x) <= tol &&
+                Math.abs(removal.position.y - position.y) <= tol &&
+                Math.abs(removal.position.z - position.z) <= tol &&
+                Math.abs(removal.scale.x - scale.x) <= scaleTol &&
+                Math.abs(removal.scale.y - scale.y) <= scaleTol &&
+                Math.abs(removal.scale.z - scale.z) <= scaleTol) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void removePlacementEntry(Vector3f position) {
+        float tol = CREATIVE_SNAP_STEP * 0.25f;
+        savedPlacements.removeIf(entry ->
+            Math.abs(entry.position.x - position.x) <= tol &&
+            Math.abs(entry.position.y - position.y) <= tol &&
+            Math.abs(entry.position.z - position.z) <= tol);
+    }
+
+    private TexturedGameObject findCreativeBlockAt(Vector3f target) {
+        if (target == null) return null;
+        float tol = CREATIVE_SNAP_STEP * 0.25f;
+        for (TexturedGameObject block : creativeBlocks) {
+            if (Math.abs(block.position.x - target.x) <= tol &&
+                Math.abs(block.position.y - target.y) <= tol &&
+                Math.abs(block.position.z - target.z) <= tol) {
+                return block;
+            }
+        }
+        return null;
     }
 
     // === MACHINE INTERACTION SYSTEM METHODS ===
@@ -6819,14 +7288,14 @@ public class ChernobylGameCore {
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
             }
         }
-        
+
         // === ELENA DISPLAY (Circular reactor fuel rod display) - Center of back wall ===
         int elenaRadius = 4;
         for (int dx = -elenaRadius; dx <= elenaRadius; dx++) {
             for (int dh = -elenaRadius + 3; dh <= elenaRadius - 2; dh++) {
                 float dist = (float) Math.sqrt(dx * dx + dh * dh);
                 if (dist <= elenaRadius) {
-                    addTexturedCube(dx * BLOCK_SIZE, (2 + dh) * BLOCK_SIZE + BLOCK_SIZE/2, 
+                    addTexturedCube(dx * BLOCK_SIZE, (2 + dh) * BLOCK_SIZE + BLOCK_SIZE/2,
                            (roomDepth - 0.4f) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE * 0.3f, "elena_display");
                 }
             }
@@ -6863,12 +7332,11 @@ public class ChernobylGameCore {
         // === LEFT WALL (-X) - With observation window ===
         int windowStartZ = -4;  // Window start position
         int windowEndZ = 4;     // Window end position  
-        int windowStartH = 1;   // Window bottom
-        int windowEndH = 4;     // Window top
         
         for (int z = -roomDepth; z <= roomDepth; z++) {
             for (int h = 0; h < wallHeight; h++) {
-                boolean isWindowArea = (z >= windowStartZ && z <= windowEndZ && h >= windowStartH && h < windowEndH);
+                boolean isWindowArea = (z >= windowStartZ && z <= windowEndZ
+                    && h >= CONTROL_ROOM_WINDOW_START_H && h < CONTROL_ROOM_WINDOW_END_H);
                 
                 if (isWindowArea) {
                     // Transparent glass pane
@@ -7064,139 +7532,314 @@ public class ChernobylGameCore {
     private void buildReactorHall() {
         // Reactor hall is to the LEFT of control room, at a LOWER level
         // Visible through the window on the left wall (left wall is at x = -16 * BLOCK_SIZE)
-        float hallX = -17 * BLOCK_SIZE;  // Starts right at the window
-        float hallY = -180f;  // Much lower floor (control room is at y=0)
-        float hallZ = 0;  // Centered with window
-        
-        int hallWidth = 25;
-        int hallDepth = 12;
-        int hallHeight = 8;
-        
+        float hallX = REACTOR_HALL_WINDOW_X;  // Starts right at the window
+        float hallY = REACTOR_HALL_FLOOR_Y;  // Much lower floor (control room is at y=0)
+        float hallZ = 0f;  // Centered with window
+
+        int hallWidth = REACTOR_HALL_WIDTH_BLOCKS;
+        int hallDepth = REACTOR_HALL_DEPTH_BLOCKS;
+        int hallEntranceZ = -REACTOR_HALL_DEPTH_BLOCKS;
+        int baseHallHeight = REACTOR_HALL_BASE_HEIGHT_BLOCKS;
+        int tallHallHeight = REACTOR_HALL_TALL_HEIGHT_BLOCKS;
+        float ceilingY = hallY + tallHallHeight * BLOCK_SIZE;
+        float mezzanineY = REACTOR_HALL_MEZZANINE_Y;
+
         // === REACTOR HALL FLOOR ===
         for (int x = 0; x < hallWidth; x++) {
             for (int z = -hallDepth; z <= hallDepth; z++) {
-                addTexturedCube(hallX - x * BLOCK_SIZE, hallY, hallZ + z * BLOCK_SIZE, 
+                addTexturedCube(hallX - x * BLOCK_SIZE, hallY, hallZ + z * BLOCK_SIZE,
                        BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
             }
         }
-        
+
         // === REACTOR TOP (Upper Biological Shield - "Elena") ===
-        // This is the circular reactor top with fuel rod caps
-        float reactorCenterX = hallX - 12 * BLOCK_SIZE;  // Center of reactor
-        float reactorTopY = hallY + BLOCK_SIZE * 0.6f;  // Slightly raised platform
-        int reactorRadius = 10;
-        
-        // Create the circular reactor top with stepped edges
+        float reactorCenterX = hallX - (hallWidth * 0.5f) * BLOCK_SIZE;  // Centered deeper in enlarged hall
+        float reactorTopY = hallY + BLOCK_SIZE * 0.45f;  // Slightly raised platform
+        int reactorRadius = 12;
+        int guardRadius = reactorRadius + 6;
+
         Random capRand = new Random(1986);  // Chernobyl year for deterministic pattern
-        
-        for (int dx = -reactorRadius; dx <= reactorRadius; dx++) {
-            for (int dz = -reactorRadius; dz <= reactorRadius; dz++) {
-                float dist = (float)Math.sqrt(dx*dx + dz*dz);
-                
-                if (dist <= reactorRadius) {
-                    // Calculate step height for outer edges
-                    float stepHeight = 0;
-                    if (dist > reactorRadius - 1) stepHeight = -BLOCK_SIZE * 0.3f;
-                    else if (dist > reactorRadius - 2) stepHeight = -BLOCK_SIZE * 0.2f;
-                    else if (dist > reactorRadius - 3) stepHeight = -BLOCK_SIZE * 0.1f;
-                    
-                    // Base metal plate
-                    addTexturedCube(reactorCenterX + dx * BLOCK_SIZE * 0.8f, 
-                           reactorTopY + stepHeight, 
-                           hallZ + dz * BLOCK_SIZE * 0.8f,
-                           BLOCK_SIZE * 0.75f, BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.75f, "reactor_floor_metal");
-                    
-                    // Fuel rod cap on top (if not on outer edge)
-                    if (dist < reactorRadius - 1) {
-                        // Determine cap color based on position (pattern like in image)
-                        String capTexture;
-                        float chance = capRand.nextFloat();
-                        
-                        // Most caps are gray, with yellow on edges, some red and blue scattered
-                        boolean isEdgeArea = (dist > reactorRadius - 4);
-                        boolean isYellowRow = (Math.abs(dx) == Math.abs(dz)) || (dx == 0 || dz == 0);
-                        
-                        if (isEdgeArea && isYellowRow && chance < 0.6f) {
-                            capTexture = "fuel_cap_yellow";
-                        } else if (chance < 0.05f) {
-                            capTexture = "fuel_cap_red";
-                        } else if (chance < 0.12f) {
-                            capTexture = "fuel_cap_blue";
-                        } else if (chance < 0.25f) {
-                            capTexture = "fuel_cap_yellow";
-                        } else {
-                            capTexture = "fuel_cap_gray";
-                        }
-                        
-                        float capY = reactorTopY + stepHeight + BLOCK_SIZE * 0.2f;
-                        TexturedGameObject rodObj = addTexturedCubeAndReturn(reactorCenterX + dx * BLOCK_SIZE * 0.8f, 
-                               capY, 
-                               hallZ + dz * BLOCK_SIZE * 0.8f,
-                               BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.3f, capTexture);
-                        
-                        // Add animation data - random speed, phase, and amplitude for each rod
-                        float speed = 0.5f + capRand.nextFloat() * 2.0f;  // 0.5 to 2.5 Hz
-                        float phase = capRand.nextFloat() * (float)Math.PI * 2;  // Random start phase
-                        float amplitude = BLOCK_SIZE * 0.05f + capRand.nextFloat() * BLOCK_SIZE * 0.15f;  // 5-20% of block size
-                        fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
-                    }
+
+        int shieldRadius = (guardRadius - 1);
+        for (int dx = -shieldRadius; dx <= shieldRadius; dx++) {
+            for (int dz = -shieldRadius; dz <= shieldRadius; dz++) {
+                float distBlocks = (float)Math.sqrt(dx * dx + dz * dz);
+                float worldX = reactorCenterX + dx * BLOCK_SIZE * 0.8f;
+                float worldZ = hallZ + dz * BLOCK_SIZE * 0.8f;
+
+                if (distBlocks <= shieldRadius) {
+                    String shieldTex = (distBlocks > shieldRadius - 1) ? "reactor_step_metal" : "reactor_floor_metal";
+                    addTexturedCube(worldX,
+                           hallY + BLOCK_SIZE * 0.25f,
+                           worldZ,
+                           BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.8f, shieldTex);
+                }
+
+                if (distBlocks <= reactorRadius + 0.5f) {
+                    String blanketTex = (distBlocks > reactorRadius - 1) ? "hazard_stripe" : "reactor_floor_metal";
+                    addTexturedCube(worldX,
+                           hallY + BLOCK_SIZE * 0.55f,
+                           worldZ,
+                           BLOCK_SIZE * 0.7f, BLOCK_SIZE * 0.14f, BLOCK_SIZE * 0.7f, blanketTex);
                 }
             }
         }
-        
-        // === STEPPED EDGES around reactor (metal steps) ===
-        for (int dx = -reactorRadius - 2; dx <= reactorRadius + 2; dx++) {
-            for (int dz = -reactorRadius - 2; dz <= reactorRadius + 2; dz++) {
-                float dist = (float)Math.sqrt(dx*dx + dz*dz);
-                
-                // Outer steps
-                if (dist > reactorRadius && dist <= reactorRadius + 2) {
-                    float stepY = hallY + BLOCK_SIZE * 0.3f;
-                    if (dist > reactorRadius + 1) stepY = hallY + BLOCK_SIZE * 0.15f;
-                    
-                    addTexturedCube(reactorCenterX + dx * BLOCK_SIZE * 0.8f, 
-                           stepY, 
-                           hallZ + dz * BLOCK_SIZE * 0.8f,
-                           BLOCK_SIZE * 0.75f, BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.75f, "reactor_step_metal");
+
+        // Dense grid of fuel channel caps filling the fenced platform
+        float channelSpacing = BLOCK_SIZE * 0.85f;
+        int channelRadius = 6;
+        for (int gx = -channelRadius; gx <= channelRadius; gx++) {
+            for (int gz = -channelRadius; gz <= channelRadius; gz++) {
+                float px = reactorCenterX + gx * channelSpacing;
+                float pz = hallZ + gz * channelSpacing;
+                float distToCenter = (float)Math.sqrt(Math.pow(px - reactorCenterX, 2) + Math.pow(pz - hallZ, 2));
+                if (distToCenter > (reactorRadius - 1.2f) * BLOCK_SIZE * 0.8f) continue;
+
+                addTexturedCube(px, reactorTopY + BLOCK_SIZE * 0.05f, pz,
+                       BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.1f, BLOCK_SIZE * 0.3f, "reactor_floor_metal");
+
+                float chance = capRand.nextFloat();
+                String capTexture;
+                boolean axialLine = (gx == 0 || gz == 0 || Math.abs(gx) == Math.abs(gz));
+                if (axialLine && chance < 0.45f) {
+                    capTexture = "fuel_cap_yellow";
+                } else if (chance < 0.08f) {
+                    capTexture = "fuel_cap_red";
+                } else if (chance < 0.16f) {
+                    capTexture = "fuel_cap_blue";
+                } else if (chance < 0.3f) {
+                    capTexture = "fuel_cap_yellow";
+                } else {
+                    capTexture = "fuel_cap_gray";
                 }
+
+                float capY = reactorTopY + BLOCK_SIZE * 0.18f;
+                TexturedGameObject rodObj = addTexturedCubeAndReturn(px,
+                       capY,
+                       pz,
+                       BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.18f, BLOCK_SIZE * 0.25f, capTexture);
+
+                float speed = 0.4f + capRand.nextFloat() * 1.6f;  // 0.4 to 2.0 Hz
+                float phase = capRand.nextFloat() * (float)Math.PI * 2;
+                float amplitude = BLOCK_SIZE * 0.04f + capRand.nextFloat() * BLOCK_SIZE * 0.12f;
+                fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
             }
         }
-        
-        // === REACTOR HALL WALLS ===
-        // Back wall only (far from control room) - NO wall on window side!
-        for (int z = -hallDepth; z <= hallDepth; z++) {
-            for (int h = 0; h < hallHeight; h++) {
-                addTexturedCube(hallX - hallWidth * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-            }
+
+        // Central graphite stack and control rod drive columns
+        addTexturedCube(reactorCenterX,
+               reactorTopY + BLOCK_SIZE * 0.7f,
+               hallZ,
+               BLOCK_SIZE * 1.4f, BLOCK_SIZE * 1.2f, BLOCK_SIZE * 1.4f, "iron_block");
+        addTexturedCube(reactorCenterX,
+               reactorTopY + BLOCK_SIZE * 1.15f,
+               hallZ,
+               BLOCK_SIZE * 1.8f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 1.8f, "hazard_stripe");
+        for (int i = 0; i < 4; i++) {
+            double angle = i * Math.PI / 2.0;
+            float dirX = (float)Math.cos(angle);
+            float dirZ = (float)Math.sin(angle);
+            float colX = reactorCenterX + dirX * BLOCK_SIZE * 4.5f;
+            float colZ = hallZ + dirZ * BLOCK_SIZE * 4.5f;
+            addTexturedCube(colX,
+                   reactorTopY + BLOCK_SIZE * 0.9f,
+                   colZ,
+                   BLOCK_SIZE * 0.6f, BLOCK_SIZE * 1.6f, BLOCK_SIZE * 0.6f, "iron_block");
+            addTexturedCube(colX,
+                   reactorTopY + BLOCK_SIZE * 1.5f,
+                   colZ,
+                   BLOCK_SIZE * 0.7f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.7f, "reactor_floor_metal");
         }
-        
-        // Side walls only
+
+        // Radial coolant pipes crisscrossing the biological shield
+        for (int i = 0; i < 4; i++) {
+            double angle = (Math.PI / 4.0) + i * (Math.PI / 2.0);
+            float dirX = (float)Math.cos(angle);
+            float dirZ = (float)Math.sin(angle);
+            addTexturedCube(reactorCenterX + dirX * BLOCK_SIZE * 2.5f,
+                   reactorTopY + BLOCK_SIZE * 0.35f,
+                   hallZ + dirZ * BLOCK_SIZE * 2.5f,
+                   BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 3.5f, "cable_tray");
+        }
+
+        // === SAFETY FENCE around reactor ===
+        float guardOffset = guardRadius * BLOCK_SIZE * 0.8f;
+        float guardHeight = BLOCK_SIZE * 1.6f;
+        for (int dx = -guardRadius; dx <= guardRadius; dx++) {
+            float px = reactorCenterX + dx * BLOCK_SIZE * 0.8f;
+            addTexturedCube(px, hallY + guardHeight / 2f, hallZ + guardOffset,
+                   BLOCK_SIZE * 0.12f, guardHeight, BLOCK_SIZE * 0.12f, "iron_block");
+            addTexturedCube(px, hallY + guardHeight / 2f, hallZ - guardOffset,
+                   BLOCK_SIZE * 0.12f, guardHeight, BLOCK_SIZE * 0.12f, "iron_block");
+        }
+        for (int dz = -guardRadius; dz <= guardRadius; dz++) {
+            float pz = hallZ + dz * BLOCK_SIZE * 0.8f;
+            addTexturedCube(reactorCenterX + guardOffset, hallY + guardHeight / 2f, pz,
+                   BLOCK_SIZE * 0.12f, guardHeight, BLOCK_SIZE * 0.12f, "iron_block");
+            addTexturedCube(reactorCenterX - guardOffset, hallY + guardHeight / 2f, pz,
+                   BLOCK_SIZE * 0.12f, guardHeight, BLOCK_SIZE * 0.12f, "iron_block");
+        }
+        float railSpan = guardOffset * 2f + BLOCK_SIZE * 0.5f;
+        addTexturedCube(reactorCenterX, hallY + guardHeight + BLOCK_SIZE * 0.05f, hallZ + guardOffset,
+               railSpan, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.08f, "iron_block");
+        addTexturedCube(reactorCenterX, hallY + guardHeight + BLOCK_SIZE * 0.05f, hallZ - guardOffset,
+               railSpan, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.08f, "iron_block");
+        addTexturedCube(reactorCenterX + guardOffset, hallY + guardHeight + BLOCK_SIZE * 0.05f, hallZ,
+               BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.08f, railSpan, "iron_block");
+        addTexturedCube(reactorCenterX - guardOffset, hallY + guardHeight + BLOCK_SIZE * 0.05f, hallZ,
+               BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.08f, railSpan, "iron_block");
+
+        // === MEZZANINE CATWALK ===
+        int catwalkWidth = REACTOR_HALL_CATWALK_WIDTH_BLOCKS;
         for (int x = 0; x < hallWidth; x++) {
-            for (int h = 0; h < hallHeight; h++) {
-                // -Z side wall: leave doorway opening for walkway at x=1,2,3 (positions -18,-19,-20 BS)
-                boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < 5);
-                if (!isWalkwayDoor) {
-                    addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
-                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+            for (int w = 0; w < catwalkWidth; w++) {
+                float zFront = hallZ + (hallDepth - w) * BLOCK_SIZE;
+                float zBack = hallZ - (hallDepth - w) * BLOCK_SIZE;
+                boolean skipDoorOverhang = (w == catwalkWidth - 1 && x >= 1 && x <= 4);
+                if (!skipDoorOverhang) {
+                    addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY, zFront,
+                           BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
                 }
-                addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY, zBack,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
             }
         }
-        
-        // === CEILING with lights ===
+        for (int z = -hallDepth + 1; z <= hallDepth - 1; z++) {
+            for (int w = 0; w < catwalkWidth; w++) {
+                addTexturedCube(hallX - w * BLOCK_SIZE, mezzanineY, hallZ + z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+                addTexturedCube(hallX - (hallWidth - 1 - w) * BLOCK_SIZE, mezzanineY, hallZ + z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+            }
+        }
+
+        // Cover the observation booth notch above the corridor-facing wall
+        float frontZ = hallZ + (hallDepth - (catwalkWidth - 1)) * BLOCK_SIZE;
+        for (int x = 1; x <= 4; x++) {
+            addTexturedCube(hallX - x * BLOCK_SIZE,
+                   mezzanineY,
+                   frontZ,
+                   BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+        }
+
+        // Catwalk railings
+        float railingHeight = BLOCK_SIZE * 1.2f;
+        for (int x = 0; x < hallWidth; x++) {
+            addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
+                   hallZ + (hallDepth - catwalkWidth + 0.2f) * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
+            addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
+                   hallZ - (hallDepth - catwalkWidth + 0.2f) * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
+        }
+        for (int z = -hallDepth; z <= hallDepth; z++) {
+            addTexturedCube(hallX - (catwalkWidth - 0.2f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
+            addTexturedCube(hallX - (hallWidth - catwalkWidth + 0.2f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
+                   BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
+        }
+
+         // === STAIRS TO CATWALK (visible access) ===
+         int totalSteps = REACTOR_HALL_STAIRS_STEPS;
+         float stairWidth = REACTOR_HALL_STAIRS_WIDTH;
+         float stairRun = REACTOR_HALL_STAIRS_RUN;
+         float stairBaseX = REACTOR_HALL_STAIRS_BASE_X;
+         float stairBaseZ = hallZ + REACTOR_HALL_STAIRS_BASE_Z;
+         float stairBaseY = REACTOR_HALL_STAIRS_BASE_Y;
+         float stepRise = (mezzanineY - stairBaseY) / totalSteps;
+         for (int step = 0; step < totalSteps; step++) {
+             float centerY = stairBaseY + stepRise * (step + 0.5f);
+             float centerZ = stairBaseZ - stairRun * step;
+             addTexturedCube(stairBaseX, centerY, centerZ,
+                 stairWidth, stepRise * 0.95f, stairRun * 0.95f, "reactor_floor_metal");
+
+             for (int side = -1; side <= 1; side += 2) {
+              float railX = stairBaseX + side * (stairWidth / 2f - BLOCK_SIZE * 0.25f);
+              addTexturedCube(railX, centerY + stepRise * 0.2f, centerZ,
+                  BLOCK_SIZE * 0.12f, stepRise + BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.12f, "iron_block");
+             }
+         }
+         addTexturedCube(stairBaseX,
+             mezzanineY + BLOCK_SIZE * 0.05f,
+             stairBaseZ - stairRun * totalSteps - BLOCK_SIZE * 0.5f,
+             stairWidth, 10, BLOCK_SIZE * 1.6f, "reactor_floor_metal");
+
+        // === REACTOR HALL WALLS (extra tall) ===
+        for (int z = -hallDepth; z <= hallDepth; z++) {
+            for (int h = 0; h < tallHallHeight; h++) {
+                float blockCenterY = hallY + h * BLOCK_SIZE;
+                float blockBottom = blockCenterY - BLOCK_SIZE * 0.5f;
+                float blockTop = blockBottom + BLOCK_SIZE;
+                boolean overlapsControlRoomView = (blockTop > CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y
+                    && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
+                String wallTexture = overlapsControlRoomView ? "glass" : "reactor_wall_white";
+                addTexturedCube(hallX - hallWidth * BLOCK_SIZE, blockCenterY, hallZ + z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
+            }
+        }
+
+        final int walkwayDoorHeightBlocks = 5; // keep entry usable while sealing the visible gap above it
+        for (int x = 0; x < hallWidth; x++) {
+            for (int h = 0; h < tallHallHeight; h++) {
+                boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < walkwayDoorHeightBlocks);
+                  if (!isWalkwayDoor) {
+                      addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
+                          BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                  }
+                  addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
+                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "glass");
+            }
+        }
+
+        // === DOME RING (structural rim) ===
         for (int x = 0; x < hallWidth; x++) {
             for (int z = -hallDepth; z <= hallDepth; z++) {
-                boolean isLight = (x % 4 == 2) && (Math.abs(z) % 6 <= 1);
-                String texture = isLight ? "fluorescent_light" : "gray_concrete";
-                addTexturedCube(hallX - x * BLOCK_SIZE, hallY + hallHeight * BLOCK_SIZE, hallZ + z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
+                addTexturedCube(hallX - x * BLOCK_SIZE, ceilingY, hallZ + z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE * 0.4f, BLOCK_SIZE, "gray_concrete");
             }
         }
-        
-        // === INDUSTRIAL EQUIPMENT around reactor ===
-        // Metal railings/barriers
+
+        // === GLASS DOME OPEN TO SKY ===
+        int domeRadiusBlocks = 12;
+        float hallCenterX = hallX - (hallWidth / 2f) * BLOCK_SIZE;
+        for (int dx = -domeRadiusBlocks; dx <= domeRadiusBlocks; dx++) {
+            for (int dz = -domeRadiusBlocks; dz <= domeRadiusBlocks; dz++) {
+                float dist = (float)Math.sqrt(dx * dx + dz * dz);
+                if (dist > domeRadiusBlocks) continue;
+                float heightBlocks = (float)Math.sqrt(Math.max(0f, domeRadiusBlocks * domeRadiusBlocks - dist * dist));
+                float y = ceilingY + heightBlocks * BLOCK_SIZE * 0.5f;
+                addTexturedCube(hallCenterX + dx * BLOCK_SIZE, y, hallZ + dz * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "glass");
+            }
+        }
+
+         // Moon + stars for the glass dome view
+         float moonY = ceilingY + domeRadiusBlocks * BLOCK_SIZE * 0.65f;
+         float moonX = hallCenterX - domeRadiusBlocks * BLOCK_SIZE * 0.35f;
+         float moonZ = hallZ + domeRadiusBlocks * BLOCK_SIZE * 0.12f;
+         addTexturedCube(moonX, moonY, moonZ,
+             BLOCK_SIZE * 3.4f, BLOCK_SIZE * 3.4f, BLOCK_SIZE * 0.6f, "white_concrete");
+         addTexturedCube(moonX, moonY, moonZ,
+             BLOCK_SIZE * 3.8f, BLOCK_SIZE * 3.8f, BLOCK_SIZE * 0.35f, "glowstone");
+
+         Random skyRand = new Random(4261986L);
+         int starsPlaced = 0;
+         float domeRadiusWorld = domeRadiusBlocks * BLOCK_SIZE;
+         while (starsPlaced < 90) {
+             float offsetX = (skyRand.nextFloat() * 2f - 1f) * domeRadiusWorld;
+             float offsetZ = (skyRand.nextFloat() * 2f - 1f) * domeRadiusWorld;
+             float dist = (float)Math.sqrt(offsetX * offsetX + offsetZ * offsetZ);
+             if (dist > domeRadiusWorld) continue;
+
+             float starHeight = ceilingY + (0.35f + skyRand.nextFloat() * 0.4f) * domeRadiusWorld;
+             float starSize = BLOCK_SIZE * (0.25f + skyRand.nextFloat() * 0.35f);
+             String starTex = (skyRand.nextFloat() < 0.35f) ? "glowstone" : "white_concrete";
+             addTexturedCube(hallCenterX + offsetX, starHeight, hallZ + offsetZ,
+                 starSize, starSize, starSize * 0.4f, starTex);
+             starsPlaced++;
+         }
+
+        // === INDUSTRIAL DETAILS NEAR STAIRS ===
         for (int z = -6; z <= 6; z += 3) {
             addTexturedCube(hallX - 3 * BLOCK_SIZE, hallY + BLOCK_SIZE, hallZ + z * BLOCK_SIZE,
                    BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.2f, "iron_block");
@@ -7447,19 +8090,6 @@ public class ChernobylGameCore {
                 addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
                        BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
             }
-            // Left wall
-            for (int h = 0; h < wallH; h++) {
-                addTexturedCube(-21 * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-            }
-            // Right wall (prevent falling off walkway into void)
-            // Only along the walkway stretch, not at the turn corner (z=-42 to -46 is open to left arm)
-            if (z < -12 && z >= -45) {
-                for (int h = 0; h < wallH; h++) {
-                    addTexturedCube(-17 * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-                }
-            }
             // Ceiling — cover full walkway width
             for (int cx = -18; cx >= -20; cx--) {
                 addTexturedCube(cx * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
@@ -7468,11 +8098,37 @@ public class ChernobylGameCore {
             }
         }
 
+        // Smooth continuous walls so the walkway sides read as solid panels instead of sand columns
+        float walkwayWallHeight = wallH * BLOCK_SIZE;
+        int walkwayStartZ = -46;
+        int walkwayEndZ = -12;
+        float walkwayLength = (walkwayEndZ - walkwayStartZ + 1) * BLOCK_SIZE;
+        float walkwayCenterZ = ((walkwayStartZ + walkwayEndZ) / 2f) * BLOCK_SIZE;
+        addTexturedCube(-21 * BLOCK_SIZE, hallFloorY + walkwayWallHeight / 2f, walkwayCenterZ,
+                BLOCK_SIZE, walkwayWallHeight, walkwayLength, "reactor_wall_white");
+
+        // Inner guard wall spans the whole run but leaves the final doorway clear
+        int innerWallStartZ = -46;
+        int innerWallEndZ = -13; // keep the hall entry (z > -13) unobstructed
+        float innerWallLength = (innerWallEndZ - innerWallStartZ + 1) * BLOCK_SIZE;
+        float innerWallCenterZ = ((innerWallStartZ + innerWallEndZ) / 2f) * BLOCK_SIZE;
+        addTexturedCube(-17 * BLOCK_SIZE, hallFloorY + walkwayWallHeight / 2f, innerWallCenterZ,
+            BLOCK_SIZE, walkwayWallHeight, innerWallLength, "reactor_wall_white");
+
+        // Single column directly in front of the landing to close the lone gap the player sees
+        for (int h = 0; h < wallH; h++) {
+            addTexturedCube(-17 * BLOCK_SIZE,
+                hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE / 2f,
+                -45 * BLOCK_SIZE,
+                BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                "reactor_wall_white");
+        }
+
          // Far wall closing walkway at z=-46 for x=-19,-20
          for (int x = -19; x >= -20; x--) {
              for (int h = 0; h < wallH; h++) {
-              addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
-                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
              }
          }
 
@@ -7481,36 +8137,36 @@ public class ChernobylGameCore {
          // ============================================================
          for (int z = -46; z <= -12; z++) {
              for (int x = 18; x <= 20; x++) {
-              if (x == 18 && z <= -42) continue;
-              addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
-                  BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+                if (x == 18 && z <= -42) continue;
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                    BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
              }
              // Inner wall (toward the landing) — skip near the open turn
              if (z < -12 && z >= -41) {
-              for (int h = 0; h < wallH; h++) {
-                  addTexturedCube(PUMP_WALKWAY_INNER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-              }
+                for (int h = 0; h < wallH; h++) {
+                    addTexturedCube(PUMP_WALKWAY_INNER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
              }
              // Outer wall (prevent falling into annex void) — extend closer to the landing so the corner is sealed
              if (z < -12 && z >= -45) {
-              for (int h = 0; h < wallH; h++) {
-                  addTexturedCube(PUMP_WALKWAY_OUTER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-              }
+                for (int h = 0; h < wallH; h++) {
+                    addTexturedCube(PUMP_WALKWAY_OUTER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
              }
              // Ceiling tiles
              for (int cx = 18; cx <= 20; cx++) {
-              addTexturedCube(cx * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
-                  (z % 6 == 0 && cx == 19) ? "fluorescent_light" : "gray_concrete");
+                addTexturedCube(cx * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                    (z % 6 == 0 && cx == 19) ? "fluorescent_light" : "gray_concrete");
              }
          }
 
          for (int x = 18; x <= 20; x++) {
              for (int h = 0; h < wallH; h++) {
-              addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
-                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
              }
          }
 
@@ -9252,6 +9908,7 @@ public class ChernobylGameCore {
             new Vector3f(headSize, headSize, headSize),
             blockTextures.get(headTex), false);
         head.isNPCPart = true;
+        head.textureName = headTex;
         texturedObjects.add(head);
         
         // Body - uses texturedCubeMesh for lab coat details
@@ -9260,6 +9917,7 @@ public class ChernobylGameCore {
             new Vector3f(bodyWidth, bodyHeight, bodyWidth * 0.5f),
             blockTextures.get(bodyTex), false);
         body.isNPCPart = true;
+        body.textureName = bodyTex;
         texturedObjects.add(body);
         
         // Left leg
@@ -9268,6 +9926,7 @@ public class ChernobylGameCore {
             new Vector3f(legWidth, legHeight, legWidth),
             blockTextures.get(legsTex), false);
         leftLeg.isNPCPart = true;
+        leftLeg.textureName = legsTex;
         texturedObjects.add(leftLeg);
         
         // Right leg
@@ -9276,6 +9935,7 @@ public class ChernobylGameCore {
             new Vector3f(legWidth, legHeight, legWidth),
             blockTextures.get(legsTex), false);
         rightLeg.isNPCPart = true;
+        rightLeg.textureName = legsTex;
         texturedObjects.add(rightLeg);
         
         // Left arm
@@ -9284,6 +9944,7 @@ public class ChernobylGameCore {
             new Vector3f(armWidth, armHeight, armWidth),
             blockTextures.get(armsTex), false);
         leftArm.isNPCPart = true;
+        leftArm.textureName = armsTex;
         texturedObjects.add(leftArm);
         
         // Right arm
@@ -9292,6 +9953,7 @@ public class ChernobylGameCore {
             new Vector3f(armWidth, armHeight, armWidth),
             blockTextures.get(armsTex), false);
         rightArm.isNPCPart = true;
+        rightArm.textureName = armsTex;
         texturedObjects.add(rightArm);
         
         // Name + role label above head - wide billboard (fullBright, no lighting)
@@ -9302,6 +9964,7 @@ public class ChernobylGameCore {
             blockTextures.get(nameLabelTex), false);
         nameLabel.fullBright = true;
         nameLabel.isNPCPart = true;
+        nameLabel.textureName = nameLabelTex;
         texturedObjects.add(nameLabel);
         
         // Add to NPC list for animation
@@ -9396,6 +10059,7 @@ public class ChernobylGameCore {
         boolean isTransparent = textureName.equals("glass");
         TexturedGameObject obj = new TexturedGameObject(texturedCubeMesh, new Vector3f(x, y, z), 
                                                         new Vector3f(sx, sy, sz), textureId, isTransparent);
+        obj.textureName = textureName;
         texturedObjects.add(obj);
     }
     
@@ -9404,6 +10068,7 @@ public class ChernobylGameCore {
         boolean isTransparent = textureName.equals("glass");
         TexturedGameObject obj = new TexturedGameObject(texturedCubeMesh, new Vector3f(x, y, z), 
                                                         new Vector3f(sx, sy, sz), textureId, isTransparent);
+        obj.textureName = textureName;
         texturedObjects.add(obj);
         return obj;
     }
@@ -9472,6 +10137,27 @@ public class ChernobylGameCore {
         if (pauseMenuOpen) {
             updatePauseMenu(window, deltaTime);
             return;
+        }
+
+        // Creative mode toggle (C key)
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+            if (!creativeTogglePressed) {
+                creativeTogglePressed = true;
+                if (!DEV_CREATIVE_MODE_ENABLED) {
+                    notificationText = "Creative tools disabled in this build";
+                    notificationTimer = 2.0f;
+                } else {
+                    creativeMode = !creativeMode;
+                    if (creativeMode) {
+                        notificationText = "Creative tools enabled (B=place, N=remove)";
+                    } else {
+                        notificationText = "Creative tools disabled";
+                    }
+                    notificationTimer = 2.0f;
+                }
+            }
+        } else {
+            creativeTogglePressed = false;
         }
 
         // Ending countdown timer (transitions to ending screen after delay)
@@ -9651,6 +10337,8 @@ public class ChernobylGameCore {
             (float) Math.sin(Math.toRadians(pitch)),
             (float) (Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch)))
         ).normalize();
+
+        handleCreativeBuildControls(window, direction);
         
         // Movement
         Vector3f right = new Vector3f(direction).cross(new Vector3f(0, 1, 0)).normalize();
@@ -9662,12 +10350,15 @@ public class ChernobylGameCore {
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
             speed *= 2.5f;
         }
+        if (creativeMode) {
+            speed *= 1.35f;
+        }
         
         // Store old position for collision rollback
         Vector3f oldPos = new Vector3f(cameraPos);
         Vector3f newPos = new Vector3f(cameraPos);
         
-        boolean frozen = dialogueActive || machineUIActive;
+        boolean frozen = (dialogueActive || machineUIActive) && !creativeMode;
         boolean movingForward = !frozen && glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
         boolean movingBack = !frozen && glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
         boolean movingLeft = !frozen && glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
@@ -9751,9 +10442,12 @@ public class ChernobylGameCore {
         // Check if landing on control desk
         float deskZ = -6 * BLOCK_SIZE;
         float deskDepth = BLOCK_SIZE * 1.5f;
+        float deskHalfDepth = deskDepth * 0.5f;
+        float deskMinZ = deskZ - deskHalfDepth;
+        float deskMaxZ = deskZ + deskHalfDepth;
         float deskTopY = 1.2f * BLOCK_SIZE + 120f; // Desk height + ground level
         if (cameraPos.x > -10 * BLOCK_SIZE && cameraPos.x < 10 * BLOCK_SIZE &&
-            cameraPos.z > deskZ - deskDepth && cameraPos.z < deskZ) {
+            cameraPos.z > deskMinZ && cameraPos.z < deskMaxZ) {
             if (newY <= deskTopY && velocityY < 0) {
                 newY = deskTopY;
                 velocityY = 0f;
@@ -9794,9 +10488,11 @@ public class ChernobylGameCore {
             atBottomLevel = true;
         }
         // Zone: REACTOR HALL (x < -17*BS, within hall Z range)
-        boolean inReactorHall = (px <= -17 * BLOCK_SIZE && pz >= -12 * BLOCK_SIZE && pz <= 12 * BLOCK_SIZE
+        boolean inReactorHall = (px <= REACTOR_HALL_WINDOW_X && pz >= REACTOR_HALL_BACK_Z && pz <= REACTOR_HALL_FRONT_Z
                                 && !onStairs);
-        
+
+        float hallFloorWorld = GROUND_LEVEL + REACTOR_HALL_FLOOR_Y;
+
         if (onStairs) {
             // Stairs: z=-34 → y=0, z=-42 → y=-180
             float t = (pz - (-34 * BLOCK_SIZE)) / ((-42 * BLOCK_SIZE) - (-34 * BLOCK_SIZE));
@@ -9804,7 +10500,19 @@ public class ChernobylGameCore {
             float stairFloorY = t * REACTOR_HALL_FLOOR_Y;
             currentGroundLevel = GROUND_LEVEL + stairFloorY;
         } else if (atBottomLevel || inReactorHall) {
-            currentGroundLevel = GROUND_LEVEL + REACTOR_HALL_FLOOR_Y;
+            currentGroundLevel = hallFloorWorld;
+        }
+
+        float reactorStairGround = getReactorHallStairGround(px, pz);
+        if (!Float.isNaN(reactorStairGround)) {
+            currentGroundLevel = Math.max(currentGroundLevel, reactorStairGround);
+        }
+
+        if (inReactorHall) {
+            float catwalkGround = getReactorHallCatwalkGround(px, pz, cameraPos.y);
+            if (!Float.isNaN(catwalkGround)) {
+                currentGroundLevel = Math.max(currentGroundLevel, catwalkGround);
+            }
         }
         
         if (cameraPos.y <= currentGroundLevel) {
@@ -9917,6 +10625,55 @@ public class ChernobylGameCore {
         glfwSetInputMode(window, GLFW_CURSOR, prevCursorMode);
         firstMouse = true;
     }
+
+    // Reactor hall mezzanine helpers keep rendering + physics in sync
+    private float getReactorHallStairGround(float px, float pz) {
+        float halfWidth = REACTOR_HALL_STAIRS_WIDTH / 2f + BLOCK_SIZE * 0.3f;
+        float minX = REACTOR_HALL_STAIRS_BASE_X - halfWidth;
+        float maxX = REACTOR_HALL_STAIRS_BASE_X + halfWidth;
+        if (px < minX || px > maxX) {
+            return Float.NaN;
+        }
+
+        float topZ = REACTOR_HALL_STAIRS_BASE_Z;
+        float bottomZ = topZ - REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+        float minZ = Math.min(topZ, bottomZ) - BLOCK_SIZE * 0.4f;
+        float maxZ = Math.max(topZ, bottomZ) + BLOCK_SIZE * 0.4f;
+        if (pz < minZ || pz > maxZ) {
+            return Float.NaN;
+        }
+
+        float totalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+        float progress = (topZ - pz) / totalRun;
+        progress = Math.max(0f, Math.min(1f, progress));
+        float stairY = REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
+        return GROUND_LEVEL + stairY;
+    }
+
+    private float getReactorHallCatwalkGround(float px, float pz, float currentY) {
+        float mezzanineWorld = GROUND_LEVEL + REACTOR_HALL_MEZZANINE_Y;
+        float activationY = mezzanineWorld - BLOCK_SIZE * 0.6f;
+        if (currentY < activationY) {
+            return Float.NaN;
+        }
+
+        boolean insideHall = (px <= REACTOR_HALL_WINDOW_X && px >= REACTOR_HALL_FAR_X
+            && pz <= REACTOR_HALL_FRONT_Z && pz >= REACTOR_HALL_BACK_Z);
+        if (!insideHall) {
+            return Float.NaN;
+        }
+
+        float band = REACTOR_HALL_CATWALK_WIDTH_BLOCKS * BLOCK_SIZE + BLOCK_SIZE * 0.3f;
+        boolean alongFront = pz >= REACTOR_HALL_FRONT_Z - band;
+        boolean alongBack = pz <= REACTOR_HALL_BACK_Z + band;
+        boolean alongWindow = px >= REACTOR_HALL_WINDOW_X - band;
+        boolean alongFar = px <= REACTOR_HALL_FAR_X + band;
+
+        if (alongFront || alongBack || alongWindow || alongFar) {
+            return mezzanineWorld;
+        }
+        return Float.NaN;
+    }
     
     // Collision detection - returns true if position collides with walls or objects
     // Supports: Control Room, Long Straight Corridor, Turn, Left Arm with Stairs, Reactor Hall
@@ -9925,15 +10682,20 @@ public class ChernobylGameCore {
         float BS = BLOCK_SIZE;
 
         // Zone detection — check specific lower-level zones FIRST
+        float hallEntranceZWorld = -REACTOR_HALL_DEPTH_BLOCKS * BS;
+        float hallPositiveZWorld = REACTOR_HALL_DEPTH_BLOCKS * BS;
+
         boolean inPumpAnnex = (x <= PUMP_ANNEX_MAX_X + BS && x >= PUMP_ANNEX_MIN_X - BS
             && z >= PUMP_ANNEX_MIN_Z - BS && z <= PUMP_ANNEX_MAX_Z + BS);
-        boolean inWalkway = (!inPumpAnnex && x <= -17 * BS && x >= -21 * BS 
-            && z >= -46 * BS && z <= -12 * BS);
-        boolean inPumpWalkway = (!inPumpAnnex && x >= PUMP_WALKWAY_INNER_WALL && x <= PUMP_WALKWAY_OUTER_WALL
-            && z >= -46 * BS && z <= -12 * BS);
+        boolean inWalkway = (!inPumpAnnex
+            && x <= (REACTOR_HALL_WINDOW_X + BS) + PR && x >= (WALKWAY_X_MIN - BS) - PR
+            && z >= -46 * BS && z <= PUMP_ANNEX_MIN_Z);
+        boolean inPumpWalkway = (!inPumpAnnex
+            && x >= PUMP_WALKWAY_INNER_WALL - PR && x <= PUMP_WALKWAY_OUTER_WALL + PR
+            && z >= -46 * BS && z <= PUMP_ANNEX_MIN_Z);
         boolean inPumpRightArm = (!inPumpAnnex && !inPumpWalkway && z < -42 * BS && z >= -46 * BS
             && x >= (CORRIDOR_HALF_WIDTH + BS) && x < PUMP_WALKWAY_INNER_WALL);
-        boolean inReactorHall = (x <= -17 * BS && z >= -12 * BS && z <= 12 * BS
+        boolean inReactorHall = (x <= REACTOR_HALL_WINDOW_X && z >= REACTOR_HALL_BACK_Z && z <= REACTOR_HALL_FRONT_Z
             && !inWalkway && !inPumpWalkway && !inPumpAnnex);
         boolean inControlRoom = (z >= CORRIDOR_START_Z && !inReactorHall);
         boolean inBottomLanding = (!inWalkway && !inPumpWalkway && !inPumpAnnex && z < -42 * BS && z >= -46 * BS
@@ -9959,20 +10721,18 @@ public class ChernobylGameCore {
 
         } else if (inWalkway) {
             // ============= WALKWAY (x=-17 to -21, z=-46 to -12) =============
-            if (x - PR < -21 * BS) return true;  // Outer railing always solid
+            if (x - PR < (WALKWAY_X_MIN - BS)) return true;  // Outer railing always solid
             if (z - PR < -46 * BS) return true;  // Far wall
             // Right wall only exists from z=-42 to z=-12 (the long stretch)
             // At z=-42 to z=-46, the right side is OPEN (connects to the landing/left arm)
-            if (z >= -42 * BS && x + PR > -17 * BS) return true;
+            if (z >= -42 * BS && z < PUMP_ANNEX_MIN_Z && x + PR > REACTOR_HALL_WINDOW_X) return true;
             // z > -12*BS: open to reactor hall (no near wall)
 
         } else if (inPumpWalkway) {
             // ============= PUMP WALKWAY (x=17 to 21, z=-46 to -12) =============
-            if (x + PR > PUMP_WALKWAY_OUTER_WALL) {
-                if (z < -12 * BS) return true;
-            }
+            if (x + PR > PUMP_WALKWAY_OUTER_WALL && z < PUMP_ANNEX_MIN_Z) return true;
             if (z - PR < -46 * BS) return true;
-            if (z >= -42 * BS && x - PR < PUMP_WALKWAY_INNER_WALL - 0.2f * BS) return true;
+            if (z >= -42 * BS && z < PUMP_ANNEX_MIN_Z && x - PR < PUMP_WALKWAY_INNER_WALL - 0.2f * BS) return true;
 
         } else if (inPumpRightArm) {
             // ============= RIGHT ARM PRIOR TO PUMP WALKWAY =============
@@ -9980,31 +10740,41 @@ public class ChernobylGameCore {
             if (z + PR > -42 * BS) return true;
 
         } else if (inReactorHall) {
-            // ============= EXISTING REACTOR HALL =============
-            float hallX = -17 * BS;
-            float hallFarX = hallX - 25 * BS; // -42*BS
-            float hallDepth = 12; // blocks in ±z
+            // ============= GLASS DOME REACTOR HALL =============
+            float hallMaxX = REACTOR_HALL_WINDOW_X + REACTOR_HALL_WALL_MARGIN;
+            float hallMinX = REACTOR_HALL_FAR_X - REACTOR_HALL_WALL_MARGIN;
+            if (x + PR > hallMaxX) return true;
+            if (x - PR < hallMinX) return true;
 
-            if (x + PR > hallX) return true; // Window-side boundary
-            if (x - PR < hallFarX + BS) return true; // Far wall
-            if (z + PR > hallDepth * BS - BS) return true; // Side wall +Z
-            // Side wall -Z: allow passage through walkway doorway (x from -18 to -21)
-            if (z - PR < -hallDepth * BS + BS) {
-                if (x > -17 * BS || x < -21 * BS) return true;
-            }
+            float hallMaxZ = REACTOR_HALL_FRONT_Z - REACTOR_HALL_WALL_MARGIN;
+            float hallMinZ = REACTOR_HALL_BACK_Z + REACTOR_HALL_WALL_MARGIN;
+            if (z + PR > hallMaxZ) return true;
+
+            float walkwayDoorMinX = WALKWAY_X_MIN - BLOCK_SIZE;
+            float walkwayDoorMaxX = WALKWAY_X_MAX + BLOCK_SIZE;
+            boolean inWalkwayDoor = (x + PR > walkwayDoorMinX && x - PR < walkwayDoorMaxX);
+            if (z - PR < hallMinZ && !inWalkwayDoor) return true;
+
+            float dxFence = Math.abs(x - REACTOR_CORE_CENTER_X) - PR;
+            float dzFence = Math.abs(z - REACTOR_CORE_CENTER_Z) - PR;
+            float fenceHalf = REACTOR_FENCE_RADIUS - REACTOR_FENCE_MARGIN;
+            if (dxFence < fenceHalf && dzFence < fenceHalf) return true;
 
         } else if (inControlRoom) {
             // ============= CONTROL ROOM =============
-            boolean nearWindow = (z >= -4 * BS && z <= 4 * BS);
-            if (nearWindow) {
-                if (x - PR < -ROOM_WIDTH + BS * 0.2f) return true;
-            } else {
-                if (x - PR < -ROOM_WIDTH + BS) return true;
-            }
-            if (x + PR > ROOM_WIDTH - BS) return true;
-            if (z + PR > ROOM_DEPTH - BS) return true;
+            boolean withinWindowBand = (z >= -4 * BS && z <= 4 * BS);
+            float leftWallPlane = withinWindowBand
+                ? -ROOM_WIDTH + BS * 0.08f   // hug the glass when looking into the hall
+                : -ROOM_WIDTH + BS * 0.4f;   // elsewhere keep a thicker buffer
+            float rightWallPlane = ROOM_WIDTH - BS * 0.1f;    // slight cushion so textures do not clip
+            float backWallPlane = ROOM_DEPTH - BS * 0.1f;
+            float corridorEntryPlane = CORRIDOR_START_Z + BS * 0.5f;
+
+            if (x - PR < leftWallPlane) return true;
+            if (x + PR > rightWallPlane) return true;
+            if (z + PR > backWallPlane) return true;
             // Front wall - with door opening to corridor
-            if (z - PR < CORRIDOR_START_Z + BS) {
+            if (z - PR < corridorEntryPlane) {
                 boolean inDoorway = (x > -2.5f * BS && x < 2.5f * BS);
                 if (!inDoorway) return true;
             }
@@ -10034,7 +10804,7 @@ public class ChernobylGameCore {
             // z=-42 side: wall except at the stair opening (x from -2 to +2)
             if (z + PR > -42 * BS) {
                 boolean inStairOpening = (x >= -CORRIDOR_HALF_WIDTH - PR && x <= CORRIDOR_HALF_WIDTH + PR);
-                boolean enteringLeftArm = (x <= (-17 * BS) + PR);
+                boolean enteringLeftArm = (x <= REACTOR_HALL_WINDOW_X + PR);
                 boolean enteringRightArm = (x >= (CORRIDOR_HALF_WIDTH + BS) - PR && x <= PUMP_WALKWAY_INNER_WALL + PR);
                 if (!inStairOpening && !enteringLeftArm && !enteringRightArm) return true;
             }
@@ -10061,12 +10831,13 @@ public class ChernobylGameCore {
         if (inControlRoom) {
             float deskZ = -6 * BS;
             float deskDepth = BS * 1.5f;
+            float deskHalfDepth = deskDepth * 0.5f;
             float deskTopY = 1.2f * BS + 120f;
             if (y < deskTopY) {
-                if (z > deskZ - deskDepth - PR && z < deskZ + PR) {
-                    if (x > -10 * BS - PR && x < 10 * BS + PR) {
-                        return true;
-                    }
+                boolean insideDeskZ = (z > deskZ - deskHalfDepth - PR && z < deskZ + deskHalfDepth + PR);
+                boolean insideDeskX = (x > -10 * BS - PR && x < 10 * BS + PR);
+                if (insideDeskX && insideDeskZ) {
+                    return true;
                 }
             }
 
@@ -10112,7 +10883,7 @@ public class ChernobylGameCore {
             }
 
             for (int pz = (int)(-ROOM_DEPTH/BS) + 3; pz <= (int)(ROOM_DEPTH/BS) - 3; pz += 4) {
-                if (pz >= -4 && pz <= 4) continue;
+                if (pz >= -6 && pz <= 6) continue;
                 float panelZ = pz * BS;
                 float leftPanelX = (-16 + 1.5f) * BS;
                 if (x < leftPanelX + BS + PR) {
@@ -10640,9 +11411,11 @@ public class ChernobylGameCore {
         Vector3f position;
         Vector3f scale;
         int textureId;
+        String textureName;
         boolean isTransparent;
         boolean fullBright;
         boolean isNPCPart; // Skip in generic render loop, rendered in NPC pass
+        boolean isCreativeBlock;
         
         TexturedGameObject(Mesh mesh, Vector3f position, Vector3f scale, int textureId, boolean isTransparent) {
             this.mesh = mesh;
@@ -10652,6 +11425,42 @@ public class ChernobylGameCore {
             this.isTransparent = isTransparent;
             this.fullBright = false;
             this.isNPCPart = false;
+            this.textureName = "";
+            this.isCreativeBlock = false;
+        }
+    }
+    
+    static class CreativePlacement {
+        String textureName;
+        Vector3f position;
+
+        CreativePlacement(String textureName, Vector3f position) {
+            this.textureName = textureName;
+            this.position = new Vector3f(position);
+        }
+    }
+
+    static class CreativeRemoval {
+        Vector3f position;
+        Vector3f scale;
+
+        CreativeRemoval(Vector3f position, Vector3f scale) {
+            this.position = new Vector3f(position);
+            this.scale = new Vector3f(scale);
+        }
+    }
+
+    static class CreativeHit {
+        TexturedGameObject block;
+        Vector3f point;
+        Vector3f normal;
+        float distance;
+
+        CreativeHit(TexturedGameObject block, Vector3f point, Vector3f normal, float distance) {
+            this.block = block;
+            this.point = point;
+            this.normal = normal;
+            this.distance = distance;
         }
     }
     
