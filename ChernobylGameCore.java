@@ -34,7 +34,6 @@ import static org.lwjgl.stb.STBVorbis.*;
  * With Minecraft-style block textures
  */
 public class ChernobylGameCore {
-
     // Shader program
     private int shaderProgram;
     private int modelLoc, viewLoc, projectionLoc;
@@ -119,14 +118,15 @@ public class ChernobylGameCore {
     private static final float ROOM_DEPTH = 12 * BLOCK_SIZE;  // Z boundaries
     private static final float ROOM_FLOOR = 20f;               // Minimum Y (above floor)
     private static final float ROOM_CEILING = 6 * BLOCK_SIZE - 20f; // Maximum Y (below ceiling)
-
+    private static final int LOCKER_DOOR_MIN_Z = -24;
+    private static final int LOCKER_DOOR_MAX_Z = -20;
     // === CORRIDOR TO REACTOR HALL ===
     // Long corridor: straight -Z from door → stairs down → turn left → left arm →
     // connecting walkway +Z → into reactor hall
     private static final float CORRIDOR_START_Z = -12 * BLOCK_SIZE;  // Front wall Z (door)
     private static final float CORRIDOR_STRAIGHT_END_Z = -34 * BLOCK_SIZE; // End of flat straight section
     private static final float CORRIDOR_HALF_WIDTH = 2 * BLOCK_SIZE; // Corridor is 4 blocks wide
-    private static final int CORRIDOR_WALL_H = 4; // Corridor wall height in blocks
+    private static final int CORRIDOR_WALL_H = 6; // Corridor wall height in blocks
     // Stairs section: z from -34 to -42, descending from y=0 to y=-180
     private static final float STAIR_START_Z = -34 * BLOCK_SIZE;
     private static final float STAIR_END_Z = -42 * BLOCK_SIZE;
@@ -141,6 +141,21 @@ public class ChernobylGameCore {
     private static final float WALKWAY_X_MAX = -18 * BLOCK_SIZE;
     private static final float WALKWAY_Z_START = -42 * BLOCK_SIZE;
     private static final float WALKWAY_Z_END = -12 * BLOCK_SIZE; // Meets reactor hall side wall
+    private static final float PUMP_WALKWAY_X_MIN = 18 * BLOCK_SIZE;
+    private static final float PUMP_WALKWAY_X_MAX = 20 * BLOCK_SIZE;
+    private static final float PUMP_WALKWAY_INNER_WALL = PUMP_WALKWAY_X_MIN - BLOCK_SIZE; // 17 * BS
+    private static final float PUMP_WALKWAY_OUTER_WALL = PUMP_WALKWAY_X_MAX + BLOCK_SIZE; // 21 * BS
+    private static final float LOCKER_ROOM_MIN_X = CORRIDOR_HALF_WIDTH + BLOCK_SIZE;
+    private static final float LOCKER_ROOM_MAX_X = LOCKER_ROOM_MIN_X + 9 * BLOCK_SIZE;
+    private static final float LOCKER_ROOM_MIN_Z = (LOCKER_DOOR_MIN_Z - 4) * BLOCK_SIZE;
+    private static final float LOCKER_ROOM_MAX_Z = (LOCKER_DOOR_MAX_Z + 4) * BLOCK_SIZE;
+    private static final float PUMP_ANNEX_MIN_X = PUMP_WALKWAY_INNER_WALL; // Mirror of reactor hall boundary
+    private static final float PUMP_ANNEX_MAX_X = PUMP_ANNEX_MIN_X + 25 * BLOCK_SIZE;
+    private static final float PUMP_ANNEX_MIN_Z = -12 * BLOCK_SIZE;
+    private static final float PUMP_ANNEX_MAX_Z = 12 * BLOCK_SIZE;
+    // Anchor the interactive dais in the center of the front wall so it becomes the focal station
+    private static final float PUMP_CONSOLE_X = (PUMP_ANNEX_MIN_X + PUMP_ANNEX_MAX_X) * 0.5f;
+    private static final float PUMP_CONSOLE_Z = PUMP_ANNEX_MAX_Z - BLOCK_SIZE * 2.5f;
     private static final float REACTOR_HALL_FLOOR_Y = -180f; // Existing reactor hall floor
     private boolean reactorHallDoorOpen = false;       // Door state
 
@@ -173,6 +188,7 @@ public class ChernobylGameCore {
 
     // E-key prompt
     private boolean showInteractPrompt = false;
+    private boolean showDebugGPSOverlay = true; // Temporary on-screen GPS readout
 
     // === MACHINE INTERACTION SYSTEM (Phase 2) ===
     private boolean machineUIActive = false;
@@ -210,6 +226,12 @@ public class ChernobylGameCore {
     private int geigerClickCount = 0;           // recent click count for display
     private float radiationFlashTimer = 0f;     // visual flash effect
 
+    // Dynamic lighting & alarms
+    private List<AlarmLight> alarmLights = new ArrayList<>();
+    private float alarmPulseTimer = 0f;
+    private float alarmActivation = 0f;
+    private float lightingTimer = 0f;
+
     // Player control state (for machine UI interactivity)
     private int selectedControl = 0;           // Which control is highlighted (0-5)
     private boolean upKeyHeld = false;
@@ -234,6 +256,21 @@ public class ChernobylGameCore {
     private float elenaScanTimer = 0f;          // Scanning animation
     private String machineLogMessage = "";      // Log message at bottom of panel
     private float machineLogTimer = 0f;         // How long to show log
+    private float pumpConsoleFlowA = 72f;
+    private float pumpConsoleFlowB = 64f;
+    private float pumpConsoleSealTemp = 215f;
+    private float pumpConsoleVibration = 0.18f;
+    private float pumpConsoleCavitationRisk = 0.25f;
+    private float pumpConsoleTrimA = 0f;
+    private float pumpConsoleTrimB = -3f;
+    private boolean pumpConsoleCrossfeedOpen = false;
+    private boolean pumpConsoleEmergencyFlush = false;
+    private boolean pumpConsoleDiagnosticsActive = false;
+    private float pumpConsoleDiagnosticsProgress = 0f;
+    private int pumpConsoleSelection = 0;
+    private float pumpConsoleClickRepeat = 0f;
+    private float pumpConsoleAlertLevel = 0.3f;
+    private boolean playerCheckedPumpConsole = false;
 
     // === ELENA ENHANCED SCAN SYSTEM ===
     private boolean[] elenaScannedSectors = new boolean[18 * 18]; // Track which sectors were scanned
@@ -266,6 +303,7 @@ public class ChernobylGameCore {
     private float paramHistoryTimer = 0f;             // Timer for recording parameter snapshots
     private int indicatorHoveredGauge = -1;           // Which gauge is mouse-hovered
     private java.util.Random indicatorRng = new java.util.Random(); // RNG for drift
+    private final Random pumpConsoleRng = new Random(6801);
 
     // Mouse state for machine UI
     private float machineMouseX = 0f;           // Mouse X in screen coords
@@ -571,25 +609,33 @@ public class ChernobylGameCore {
             + "        FragColor = color;\n"
             + "    }\n"
             + "}\n";
-        int vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, hudVertSrc);
-        glCompileShader(vs);
-        int fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, hudFragSrc);
-        glCompileShader(fs);
+
+        // Compile the lightweight HUD shader once up-front
+        int hudVertShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(hudVertShader, hudVertSrc);
+        glCompileShader(hudVertShader);
+        checkShaderCompilation(hudVertShader, "HUD VERTEX");
+
+        int hudFragShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(hudFragShader, hudFragSrc);
+        glCompileShader(hudFragShader);
+        checkShaderCompilation(hudFragShader, "HUD FRAGMENT");
+
         hudShaderProgram = glCreateProgram();
-        glAttachShader(hudShaderProgram, vs);
-        glAttachShader(hudShaderProgram, fs);
+        glAttachShader(hudShaderProgram, hudVertShader);
+        glAttachShader(hudShaderProgram, hudFragShader);
         glLinkProgram(hudShaderProgram);
-        glDeleteShader(vs);
-        glDeleteShader(fs);
+        checkProgramLinking(hudShaderProgram);
+
+        glDeleteShader(hudVertShader);
+        glDeleteShader(hudFragShader);
+
         hudProjLoc = glGetUniformLocation(hudShaderProgram, "projection");
         hudModelLoc = glGetUniformLocation(hudShaderProgram, "model");
-        hudTexLoc = glGetUniformLocation(hudShaderProgram, "tex");
         hudColorLoc = glGetUniformLocation(hudShaderProgram, "color");
         hudUseTexLoc = glGetUniformLocation(hudShaderProgram, "useTexture");
+        hudTexLoc = glGetUniformLocation(hudShaderProgram, "tex");
 
-        // Create a simple quad mesh for HUD elements
         float[] quadVerts = {
             // pos      // uv
             0f, 0f,     0f, 1f,
@@ -2193,6 +2239,11 @@ public class ChernobylGameCore {
     }
 
     private String[] getDialogueForNPC(String npcName) {
+        if (npcName.equals("Laptev")) {
+            return getLockerCrewDialogue();
+        } else if (npcName.equals("Kudryavtsev")) {
+            return getPumpTechDialogue();
+        }
         switch (storyPhase) {
             case 0:
                 if (npcName.equals("Akimov")) {
@@ -2556,6 +2607,87 @@ public class ChernobylGameCore {
         }
     }
 
+    private String[] getLockerCrewDialogue() {
+        switch (storyPhase) {
+            case 0:
+            case 1:
+            case 2:
+                return new String[]{
+                    "Evening, comrade. Locker room is east wing.",
+                    "Take the corridor past the panels to reach us."
+                };
+            case 3:
+            case 4:
+                return new String[]{
+                    "Radiation badges read clean so far.",
+                    "Have you heard anything about the test?"
+                };
+            case 5:
+                return new String[]{
+                    "Everyone's whispering about xenon poisoning.",
+                    "If we need to muster, this room is ready."
+                };
+            case 6:
+                return new String[]{
+                    "We staged medical kits in the lockers.",
+                    "If alarms sound, grab one on your way past."
+                };
+            case 7:
+                return new String[]{
+                    "Sirens from the control room carry this far.",
+                    "Tell us if we need to don respirators."
+                };
+            case 8:
+            case 9:
+                return new String[]{
+                    "Radiation spikes hit our dosimeters!",
+                    "The corridor air tastes metallic—what happened?"
+                };
+            default:
+                return new String[]{"Stay sharp, comrade."};
+        }
+    }
+
+    private String[] getPumpTechDialogue() {
+        switch (storyPhase) {
+            case 0:
+            case 1:
+                return new String[]{
+                    "Pump Annex humming fine.",
+                    "We're balancing flow for the test later."
+                };
+            case 2:
+            case 3:
+                return new String[]{
+                    "Coolant circulation is steady.",
+                    "We could push harder if Dyatlov insists."
+                };
+            case 4:
+            case 5:
+                return new String[]{
+                    "Xenon rumors reached us.",
+                    "If flow surges, I'll shut valves manually."
+                };
+            case 6:
+                return new String[]{
+                    "Turbine disconnect order came through.",
+                    "If power drops, our pumps will starve."
+                };
+            case 7:
+                return new String[]{
+                    "We hear banging in the conduits.",
+                    "Are you sure AZ-5 is still optional?"
+                };
+            case 8:
+            case 9:
+                return new String[]{
+                    "Pressure gauges just died.",
+                    "Whatever blew upstairs shook the annex."};
+            default:
+                return new String[]{"Flow lines are your lifeline."};
+        }
+    }
+
     private void updateNPCStoryBehavior() {
         for (NPCEngineer npc : npcEngineers) {
             // Only update if story state changed for this NPC
@@ -2814,6 +2946,8 @@ public class ChernobylGameCore {
                 renderElenaDisplayUI(screenW, screenH);
             } else if (activeMachine.equals("INDICATOR_PANEL")) {
                 renderIndicatorPanelUI(screenW, screenH);
+            } else if (activeMachine.equals("PUMP_CONSOLE")) {
+                renderPumpConsoleUI(screenW, screenH);
             }
             // Restore state
             glEnable(GL_DEPTH_TEST);
@@ -2824,6 +2958,21 @@ public class ChernobylGameCore {
         // Top left: Time display
         drawHUDRect(10, screenH - 50, 420, 45, 0f, 0f, 0f, 0.65f);
         drawHUDText(storyTime, 20, screenH - 38, 2, 1.0f, 0.7f, 0.2f, 1.0f);
+
+        if (showDebugGPSOverlay) {
+            float blockX = cameraPos.x / BLOCK_SIZE;
+            float blockY = cameraPos.y / BLOCK_SIZE;
+            float blockZ = cameraPos.z / BLOCK_SIZE;
+            String gpsText = String.format("GPS  X:%6.2f  Y:%5.2f  Z:%6.2f (blocks)", blockX, blockY, blockZ);
+            String zoneText = "Zone: " + describePlayerLocation(cameraPos.x, cameraPos.z);
+            float maxChars = Math.max(gpsText.length(), zoneText.length());
+            float gpsW = Math.max(320f, maxChars * 8f + 30f);
+            float gpsX = 10f;
+            float gpsY = screenH - 110f;
+            drawHUDRect(gpsX, gpsY, gpsW, 55f, 0f, 0f, 0f, 0.55f);
+            drawHUDText(gpsText, gpsX + 14f, gpsY + 34f, 2, 0.6f, 0.9f, 1f, 1f);
+            drawHUDText(zoneText, gpsX + 14f, gpsY + 12f, 2, 0.9f, 0.75f, 0.3f, 0.95f);
+        }
 
         // Top center: Current objective
         if (!currentObjective.isEmpty()) {
@@ -2963,6 +3112,46 @@ public class ChernobylGameCore {
         // Restore state
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
+    }
+
+    private String describePlayerLocation(float px, float pz) {
+        float BS = BLOCK_SIZE;
+        if (pz >= CORRIDOR_START_Z) {
+            return "Control Room";
+        }
+        if (px <= PUMP_ANNEX_MAX_X && px >= PUMP_ANNEX_MIN_X && pz >= PUMP_ANNEX_MIN_Z && pz <= PUMP_ANNEX_MAX_Z) {
+            return "Pump Annex";
+        }
+        if (px <= -17 * BS && px >= -21 * BS && pz >= -46 * BS && pz <= -12 * BS) {
+            return "Reactor Walkway";
+        }
+        if (px >= PUMP_WALKWAY_INNER_WALL && px <= PUMP_WALKWAY_OUTER_WALL && pz >= -46 * BS && pz <= -12 * BS) {
+            return "Pump Walkway";
+        }
+        if (px <= -17 * BS && pz >= -12 * BS && pz <= 12 * BS) {
+            return "Reactor Hall";
+        }
+        if (pZInRange(pz, -46, -42) && px >= (CORRIDOR_HALF_WIDTH + BS) && px < PUMP_WALKWAY_INNER_WALL) {
+            return "Pump Arm Landing";
+        }
+        if (pZInRange(pz, -46, -42) && px <= -17 * BS) {
+            return "Reactor Arm Landing";
+        }
+        if (pZInRange(pz, -46, -42)) {
+            return "Bottom Landing";
+        }
+        if (pZInRange(pz, -42, -34)) {
+            return "Stairwell";
+        }
+        if (pZInRange(pz, -34, -12)) {
+            return "Straight Corridor";
+        }
+        return "Service Corridor";
+    }
+
+    private boolean pZInRange(float pz, int maxBlock, int minBlock) {
+        float BS = BLOCK_SIZE;
+        return pz <= minBlock * BS && pz >= maxBlock * BS;
     }
 
     private void drawHUDRect(float x, float y, float w, float h, float r, float g, float b, float a) {
@@ -3142,6 +3331,8 @@ public class ChernobylGameCore {
             indicatorNeglectPenalty = Math.max(0f, indicatorNeglectPenalty - 0.01f);
         }
 
+        updatePumpAnnexTelemetry(0.1f);
+
         // Story progression triggers from machine interaction
         phaseTimer += dt;
         if (storyPhase == 1 && playerReducedPower && reactorPower < 800f) {
@@ -3202,6 +3393,55 @@ public class ChernobylGameCore {
                 showNotification("TOTAL LOSS OF CONTROL! REACTOR EXPLODES!");
                 updateReactorState();
                 return;
+            }
+        }
+    }
+
+    private void updatePumpAnnexTelemetry(float tick) {
+        float pumpLoad = Math.max(0.2f, coolantFlow / 100f);
+        float targetFlowA = 60f + pumpLoad * 30f + pumpConsoleTrimA + (pumpConsoleCrossfeedOpen ? 4f : 0f);
+        float targetFlowB = 55f + pumpLoad * 25f + pumpConsoleTrimB + (pumpConsoleCrossfeedOpen ? 2f : -3f);
+        if (pumpConsoleEmergencyFlush) targetFlowA += 6f;
+
+        float noiseA = (pumpConsoleRng.nextFloat() - 0.5f) * 0.8f;
+        float noiseB = (pumpConsoleRng.nextFloat() - 0.5f) * 0.8f;
+        pumpConsoleFlowA += (targetFlowA - pumpConsoleFlowA) * 0.12f + noiseA * 0.05f;
+        pumpConsoleFlowB += (targetFlowB - pumpConsoleFlowB) * 0.15f + noiseB * 0.05f;
+        pumpConsoleFlowA = Math.max(35f, Math.min(115f, pumpConsoleFlowA));
+        pumpConsoleFlowB = Math.max(30f, Math.min(110f, pumpConsoleFlowB));
+
+        float tempTarget = 180f + reactorTemperature * 0.2f - (pumpConsoleEmergencyFlush ? 35f : 0f) + pumpLoad * 40f;
+        pumpConsoleSealTemp += (tempTarget - pumpConsoleSealTemp) * 0.1f;
+        pumpConsoleSealTemp = Math.max(120f, Math.min(360f, pumpConsoleSealTemp));
+
+        float vibTarget = 0.12f + Math.abs(pumpConsoleFlowA - pumpConsoleFlowB) * 0.0025f;
+        if (pumpConsoleCrossfeedOpen) vibTarget += 0.04f;
+        if (pumpConsoleEmergencyFlush) vibTarget += 0.03f;
+        pumpConsoleVibration += (vibTarget - pumpConsoleVibration) * 0.3f;
+        pumpConsoleVibration = Math.max(0.05f, Math.min(0.45f, pumpConsoleVibration));
+
+        float cavTarget = 0.15f + (1f - pumpLoad) * 0.4f + (pumpConsoleCrossfeedOpen ? 0.08f : 0f);
+        if (pumpConsoleEmergencyFlush) cavTarget += 0.15f;
+        pumpConsoleCavitationRisk += (cavTarget - pumpConsoleCavitationRisk) * 0.25f;
+        pumpConsoleCavitationRisk = Math.max(0f, Math.min(1f, pumpConsoleCavitationRisk));
+
+        float sealStress = Math.max(0f, (pumpConsoleSealTemp - 220f) / 180f);
+        pumpConsoleAlertLevel = Math.max(0f, Math.min(1f,
+            Math.max(sealStress, Math.max(pumpConsoleVibration * 2.1f, pumpConsoleCavitationRisk))));
+
+        if (pumpConsoleDiagnosticsActive) {
+            pumpConsoleDiagnosticsProgress += tick * 0.25f;
+            if (pumpConsoleDiagnosticsProgress >= 1f) {
+                pumpConsoleDiagnosticsActive = false;
+                pumpConsoleDiagnosticsProgress = 1f;
+                pumpConsoleAlertLevel = Math.max(0f, pumpConsoleAlertLevel - 0.1f);
+                pumpConsoleCavitationRisk = Math.max(0.05f, pumpConsoleCavitationRisk - 0.1f);
+                showMachineLog("FLOW DIAGNOSTIC COMPLETE - READINGS RESET");
+            }
+        } else {
+            pumpConsoleDiagnosticsProgress = Math.max(0f, pumpConsoleDiagnosticsProgress - tick * 0.1f);
+            if (!pumpConsoleEmergencyFlush) {
+                pumpConsoleAlertLevel = Math.max(0f, pumpConsoleAlertLevel - tick * 0.02f);
             }
         }
     }
@@ -3331,8 +3571,8 @@ public class ChernobylGameCore {
                 firstMouse = true;
             }
 
-            // ESC or right-click to close machine UI
-            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS || glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+            // ESC closes machine UI (reserve right-click for machine controls)
+            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                 if (!escKeyPressed) {
                     escKeyPressed = true;
                     machineUIActive = false;
@@ -3636,6 +3876,63 @@ public class ChernobylGameCore {
                 }
             }
 
+            if (activeMachine.equals("PUMP_CONSOLE")) {
+                float panelW = screenW * 0.82f;
+                float panelH = screenH * 0.8f;
+                float panelX = (screenW - panelW) / 2f;
+                float panelY = (screenH - panelH) / 2f;
+                float leftW = panelW * 0.56f;
+                float ctrlX = panelX + leftW + 15f;
+                float ctrlW = panelW - leftW - 30f;
+                float ctrlTop = panelY + panelH - 70f;
+                float itemH = 54f;
+                int optionCount = 5;
+
+                for (int i = 0; i < optionCount; i++) {
+                    float rowTop = ctrlTop - i * itemH;
+                    float rowBot = rowTop - itemH + 6f;
+                    if (machineMouseX >= ctrlX + 8f && machineMouseX <= ctrlX + ctrlW - 8f &&
+                        machineMouseY >= rowBot && machineMouseY <= rowTop) {
+                        pumpConsoleSelection = i;
+                    }
+                }
+
+                pumpConsoleClickRepeat += dt;
+                if ((leftNow || rightNow) && pumpConsoleClickRepeat > 0.12f) {
+                    pumpConsoleClickRepeat = 0f;
+                    int dir = rightNow ? 1 : -1;
+                    adjustPumpConsoleSetting(pumpConsoleSelection, dir);
+                }
+                if (!leftNow && !rightNow) pumpConsoleClickRepeat = 0.2f;
+
+                if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                    if (!upKeyHeld) { upKeyHeld = true; pumpConsoleSelection = Math.max(0, pumpConsoleSelection - 1); }
+                } else { upKeyHeld = false; }
+                if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                    if (!downKeyHeld) { downKeyHeld = true; pumpConsoleSelection = Math.min(optionCount - 1, pumpConsoleSelection + 1); }
+                } else { downKeyHeld = false; }
+
+                boolean leftPress = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
+                boolean rightPress = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
+                controlRepeatTimer += dt;
+                if ((leftPress || rightPress) && controlRepeatTimer > 0.1f) {
+                    controlRepeatTimer = 0f;
+                    int dir = rightPress ? 1 : -1;
+                    adjustPumpConsoleSetting(pumpConsoleSelection, dir);
+                }
+                if (!leftPress && !rightPress) controlRepeatTimer = 0.25f;
+
+                if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                    if (!spaceKeyPressed) {
+                        spaceKeyPressed = true;
+                        pumpConsoleSelection = 4;
+                        adjustPumpConsoleSetting(4, 1);
+                    }
+                } else {
+                    spaceKeyPressed = false;
+                }
+            }
+
             return; // Don't check proximity while UI is open
         }
 
@@ -3653,12 +3950,18 @@ public class ChernobylGameCore {
         float dzI = cameraPos.z - INDICATOR_Z;
         float distIndicator = (float) Math.sqrt(dxI * dxI + dzI * dzI);
 
+        float dxPump = cameraPos.x - PUMP_CONSOLE_X;
+        float dzPump = cameraPos.z - PUMP_CONSOLE_Z;
+        float distPumpConsole = (float) Math.sqrt(dxPump * dxPump + dzPump * dzPump);
+
         if (distPanel < MACHINE_INTERACT_DISTANCE) {
             nearbyMachine = "CONTROL_PANEL";
         } else if (distElena < MACHINE_INTERACT_DISTANCE) {
             nearbyMachine = "ELENA";
         } else if (distIndicator < MACHINE_INTERACT_DISTANCE * 1.5f) {
             nearbyMachine = "INDICATOR_PANEL";
+        } else if (distPumpConsole < MACHINE_INTERACT_DISTANCE * 0.9f) {
+            nearbyMachine = "PUMP_CONSOLE";
         }
 
         // Press E to open machine
@@ -3673,6 +3976,12 @@ public class ChernobylGameCore {
                         indicatorCheckTimer = 0f; // Reset neglect timer
                         indicatorHoveredGauge = -1;
                         showMachineLog("INDICATOR PANELS OPENED - CHECK READINGS");
+                    }
+                    if (nearbyMachine.equals("PUMP_CONSOLE")) {
+                        playerCheckedPumpConsole = true;
+                        pumpConsoleSelection = 0;
+                        pumpConsoleClickRepeat = 0.2f;
+                        showMachineLog("PUMP TERMINAL ONLINE - MONITOR COOLING HEADER");
                     }
                     if (elenaSelectedSector < 0) elenaSelectedSector = 9 * 18 + 9; // center
                 }
@@ -3723,11 +4032,63 @@ public class ChernobylGameCore {
         }
     }
 
+    private void adjustPumpConsoleSetting(int option, int dir) {
+        playerCheckedPumpConsole = true;
+        switch (option) {
+            case 0:
+                pumpConsoleTrimA = Math.max(-20f, Math.min(20f, pumpConsoleTrimA + dir * 1.5f));
+                showMachineLog("PUMP A TRIM " + (dir > 0 ? "UP " : "DOWN ") + String.format("%+.1f%%", pumpConsoleTrimA));
+                break;
+            case 1:
+                pumpConsoleTrimB = Math.max(-20f, Math.min(20f, pumpConsoleTrimB + dir * 1.5f));
+                showMachineLog("PUMP B TRIM " + (dir > 0 ? "UP " : "DOWN ") + String.format("%+.1f%%", pumpConsoleTrimB));
+                break;
+            case 2:
+                if (dir > 0 && !pumpConsoleCrossfeedOpen) {
+                    pumpConsoleCrossfeedOpen = true;
+                    showMachineLog("CROSSFLOW HEADER OPENED");
+                } else if (dir < 0 && pumpConsoleCrossfeedOpen) {
+                    pumpConsoleCrossfeedOpen = false;
+                    showMachineLog("CROSSFLOW HEADER SEALED");
+                }
+                break;
+            case 3:
+                if (dir > 0 && !pumpConsoleEmergencyFlush) {
+                    pumpConsoleEmergencyFlush = true;
+                    showMachineLog("EMERGENCY FLUSH ARMED - WATCH TEMPERATURE");
+                } else if (dir < 0 && pumpConsoleEmergencyFlush) {
+                    pumpConsoleEmergencyFlush = false;
+                    showMachineLog("EMERGENCY FLUSH SAFED");
+                }
+                break;
+            case 4:
+                if (dir > 0 && !pumpConsoleDiagnosticsActive) {
+                    pumpConsoleDiagnosticsActive = true;
+                    pumpConsoleDiagnosticsProgress = 0f;
+                    showMachineLog("RUNNING FLOW DIAGNOSTIC...");
+                } else if (dir < 0 && pumpConsoleDiagnosticsActive) {
+                    pumpConsoleDiagnosticsActive = false;
+                    pumpConsoleDiagnosticsProgress = 0f;
+                    showMachineLog("FLOW DIAGNOSTIC ABORTED");
+                }
+                break;
+        }
+    }
+
     private void renderMachinePrompt(float screenW, float screenH) {
         if (!nearbyMachine.isEmpty() && !machineUIActive && !dialogueActive) {
-            String machineName = nearbyMachine.equals("CONTROL_PANEL") ? "CONTROL PANEL" : 
-                                 nearbyMachine.equals("ELENA") ? "ELENA DISPLAY" : "INDICATOR PANELS";
-            String prompt = "PRESS E TO " + (nearbyMachine.equals("INDICATOR_PANEL") ? "READ " : "OPEN ") + machineName;
+            String machineName;
+            if (nearbyMachine.equals("CONTROL_PANEL")) {
+                machineName = "CONTROL PANEL";
+            } else if (nearbyMachine.equals("ELENA")) {
+                machineName = "ELENA DISPLAY";
+            } else if (nearbyMachine.equals("PUMP_CONSOLE")) {
+                machineName = "PUMP ANNEX TERMINAL";
+            } else {
+                machineName = "INDICATOR PANELS";
+            }
+            boolean readOnly = nearbyMachine.equals("INDICATOR_PANEL");
+            String prompt = "PRESS E TO " + (readOnly ? "READ " : "OPEN ") + machineName;
             float promptW = prompt.length() * 10 + 30;
             float promptX = (screenW - promptW) / 2;
             drawHUDRect(promptX, 100, promptW, 35, 0f, 0f, 0f, 0.6f);
@@ -4555,6 +4916,8 @@ public class ChernobylGameCore {
         blockTextures.put("monitor_screen", generateMonitorTexture());
         blockTextures.put("cable_tray", generateConcreteTexture(0x2A2218));
         blockTextures.put("window_frame", generateConcreteTexture(0x4A3A28));
+        blockTextures.put("hazard_stripe", generateHazardStripeTexture());
+        blockTextures.put("warning_label", generateWarningLabelTexture());
         
         // Reactor hall textures
         blockTextures.put("reactor_floor_metal", generateReactorFloorTexture());
@@ -4591,6 +4954,8 @@ public class ChernobylGameCore {
         blockTextures.put("akimov_label", generateNameRoleLabelTexture("A. AKIMOV", "SHIFT SUPERVISOR"));
         blockTextures.put("toptunov_label", generateNameRoleLabelTexture("L. TOPTUNOV", "SR. REACTOR ENGINEER"));
         blockTextures.put("dyatlov_label", generateNameRoleLabelTexture("A. DYATLOV", "DEPUTY CHIEF ENGINEER"));
+        blockTextures.put("laptev_label", generateNameRoleLabelTexture("S. LAPTEV", "MAINT. CREW"));
+        blockTextures.put("kudryavtsev_label", generateNameRoleLabelTexture("B. KUDRYAVTSEV", "PUMP TECHNICIAN"));
 
         // Perevozchenko NPC textures (reactor hall worker - orange hard hat + coveralls)
         blockTextures.put("perevozchenko_head", generatePerevozchHeadAtlas());
@@ -4598,6 +4963,18 @@ public class ChernobylGameCore {
         blockTextures.put("perevozchenko_legs", generateEngineerLegsTexture(0x2A3A2A)); // Dark green pants
         blockTextures.put("perevozchenko_arms", generateEngineerArmsTexture(0xCC8855)); // Skin tone arms
         blockTextures.put("perevozchenko_label", generateNameRoleLabelTexture("V. PEREVOZCHENKO", "REACTOR SECTION FOREMAN"));
+
+        // Maintenance locker crew NPC textures
+        blockTextures.put("laptev_head", generateEngineerHeadTexture(0xD2A070, true));
+        blockTextures.put("laptev_body", generateEngineerBodyTexture(0x334A66)); // Navy coveralls
+        blockTextures.put("laptev_legs", generateEngineerLegsTexture(0x1E2F42));
+        blockTextures.put("laptev_arms", generateEngineerArmsTexture(0xD2A070));
+
+        // Pump technician NPC textures
+        blockTextures.put("kudryavtsev_head", generateEngineerHeadTexture(0xC78E63, false));
+        blockTextures.put("kudryavtsev_body", generateEngineerBodyTexture(0x5A3E2A)); // Brown work jacket
+        blockTextures.put("kudryavtsev_legs", generateEngineerLegsTexture(0x2E1F18));
+        blockTextures.put("kudryavtsev_arms", generateEngineerArmsTexture(0xC78E63));
     }
     
     // Chernobyl-specific texture generators
@@ -4694,6 +5071,49 @@ public class ChernobylGameCore {
                     b = Math.max(0, b - 15);
                 }
                 
+                pixels[y * TEXTURE_SIZE + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        return createTextureFromPixels(pixels);
+    }
+
+    private int generateHazardStripeTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        for (int y = 0; y < TEXTURE_SIZE; y++) {
+            for (int x = 0; x < TEXTURE_SIZE; x++) {
+                boolean stripe = ((x + y) / 2) % 2 == 0;
+                int r = stripe ? 235 : 20;
+                int g = stripe ? 200 : 20;
+                int b = stripe ? 40 : 20;
+                if (stripe) {
+                    r = Math.min(255, r + (int)(Math.sin((x + y) * 0.7f) * 10));
+                    g = Math.min(255, g + (int)(Math.cos((x - y) * 0.5f) * 8));
+                }
+                pixels[y * TEXTURE_SIZE + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        return createTextureFromPixels(pixels);
+    }
+
+    private int generateWarningLabelTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        for (int y = 0; y < TEXTURE_SIZE; y++) {
+            for (int x = 0; x < TEXTURE_SIZE; x++) {
+                boolean border = (x <= 1 || x >= 14 || y <= 1 || y >= 14);
+                int r = border ? 250 : 180;
+                int g = border ? 210 : 30;
+                int b = border ? 60 : 30;
+                // White exclamation mark in center
+                if (x >= 7 && x <= 8 && y >= 4 && y <= 11) {
+                    r = 255;
+                    g = 255;
+                    b = 255;
+                }
+                if (x >= 7 && x <= 8 && y >= 12 && y <= 13) {
+                    r = 255;
+                    g = 255;
+                    b = 255;
+                }
                 pixels[y * TEXTURE_SIZE + x] = (255 << 24) | (r << 16) | (g << 8) | b;
             }
         }
@@ -5084,7 +5504,7 @@ public class ChernobylGameCore {
             {1,1, 1,1, 1,1, 1,1, 1,1}, // 8
             {1,1, 1,1, 1,1, 0,1, 1,1}, // 9
         };
-        
+
         int idx = digit - '0';
         int[] p = patterns[idx];
         for (int row = 0; row < 5; row++) {
@@ -5094,6 +5514,192 @@ public class ChernobylGameCore {
                 }
             }
         }
+    }
+
+    private void renderPumpConsoleUI(float screenW, float screenH) {
+        drawHUDRect(0, 0, screenW, screenH, 0f, 0f, 0.02f, 0.7f);
+
+        float bezelW = screenW * 0.86f;
+        float bezelH = screenH * 0.82f;
+        float bezelX = (screenW - bezelW) / 2f;
+        float bezelY = (screenH - bezelH) / 2f;
+
+        drawHUDRect(bezelX, bezelY, bezelW, bezelH, 0.03f, 0.04f, 0.08f, 0.94f);
+        drawHUDRect(bezelX + 14f, bezelY + 14f, bezelW - 28f, bezelH - 28f, 0.05f, 0.09f, 0.14f, 0.9f);
+        drawHUDRect(bezelX + 14f, bezelY + bezelH - 90f, bezelW - 28f, 76f, 0.65f, 0.32f, 0.07f, 0.95f);
+        drawHUDRect(bezelX + 24f, bezelY + bezelH - 58f, bezelW * 0.5f, 34f, 0.95f, 0.71f, 0.2f, 0.8f);
+
+        drawHUDText("PUMP ANNEX FRONT STATION", bezelX + 42f, bezelY + bezelH - 38f, 3, 1f, 0.94f, 0.65f, 1f);
+        drawHUDText("LOOP 4 COOLING VECTOR", bezelX + bezelW - 320f, bezelY + bezelH - 38f, 2, 0.95f, 0.82f, 0.45f, 1f);
+
+        float leftColumnX = bezelX + 40f;
+        float leftColumnY = bezelY + 60f;
+        float leftColumnW = bezelW * 0.28f;
+        float leftColumnH = bezelH - 170f;
+        drawHUDRect(leftColumnX, leftColumnY, leftColumnW, leftColumnH, 0.04f, 0.11f, 0.16f, 0.9f);
+        drawHUDRect(leftColumnX + 8f, leftColumnY + 8f, leftColumnW - 16f, leftColumnH - 16f, 0.02f, 0.18f, 0.25f, 0.6f);
+
+        for (int i = 1; i < 5; i++) {
+            float gy = leftColumnY + (leftColumnH / 5f) * i;
+            drawHUDRect(leftColumnX + 12f, gy, leftColumnW - 24f, 1.2f, 0.08f, 0.35f, 0.48f, 0.35f);
+        }
+        for (int i = 0; i < 3; i++) {
+            float gx = leftColumnX + 16f + i * ((leftColumnW - 32f) / 2f);
+            drawHUDRect(gx, leftColumnY + 18f, 1f, leftColumnH - 36f, 0.08f, 0.24f, 0.32f, 0.25f);
+        }
+
+        float barW = (leftColumnW - 72f) / 2f;
+        float barH = leftColumnH - 150f;
+        float barBase = leftColumnY + 70f;
+        float[] flows = { pumpConsoleFlowA, pumpConsoleFlowB };
+        String[] flowLabels = { "PUMP A", "PUMP B" };
+        for (int i = 0; i < flows.length; i++) {
+            float x = leftColumnX + 28f + i * (barW + 44f);
+            drawHUDRect(x, barBase, barW, barH, 0.01f, 0.09f, 0.14f, 0.85f);
+            drawHUDRect(x + 4f, barBase + 4f, barW - 8f, barH - 8f, 0.02f, 0.25f, 0.35f, 0.75f);
+
+            float norm = Math.max(0f, Math.min(1f, flows[i] / 120f));
+            float fill = (barH - 16f) * norm;
+            float r = (flows[i] < 55f || flows[i] > 110f) ? 0.95f : 0.2f;
+            float g = (flows[i] < 55f || flows[i] > 110f) ? 0.25f : 0.82f;
+            float b = 0.4f;
+            drawHUDRect(x + 6f, barBase + 8f, barW - 12f, fill, r, g, b, 0.95f);
+
+            float warnHeight = barBase + 8f + (barH - 16f) * (100f / 120f);
+            drawHUDRect(x + 6f, warnHeight, barW - 12f, 2f, 0.95f, 0.45f, 0.25f, 0.8f);
+
+            drawHUDText(flowLabels[i], x, barBase + barH + 20f, 2, 0.8f, 0.95f, 1f, 1f);
+            drawHUDText(String.format("%3.0f %%", flows[i]), x, barBase + barH - 32f, 3, 0.95f, 0.95f, 0.7f, 1f);
+        }
+
+        float capsuleY = leftColumnY + 18f;
+        float capsuleW = (leftColumnW - 56f) / 2f;
+        float capsuleH = 46f;
+        float sealWarn = pumpConsoleSealTemp > 300f ? 1f : 0.35f;
+        float vibWarn = pumpConsoleVibration > 0.3f ? 1f : 0.35f;
+        drawHUDRect(leftColumnX + 20f, capsuleY, capsuleW, capsuleH, 0.2f, 0.08f, 0.05f, 0.85f);
+        drawHUDRect(leftColumnX + 28f, capsuleY + 6f, capsuleW - 16f, capsuleH - 12f, 0.35f, sealWarn, 0.2f, 0.9f);
+        drawHUDText("SEAL TEMP", leftColumnX + 32f, capsuleY + capsuleH - 14f, 2, 0.9f, 0.9f, 0.8f, 1f);
+        drawHUDText(String.format("%.0f C", pumpConsoleSealTemp), leftColumnX + 32f, capsuleY + 12f, 2, 1f, 0.95f, 0.65f, 1f);
+
+        float vibX = leftColumnX + 36f + capsuleW;
+        drawHUDRect(vibX, capsuleY, capsuleW, capsuleH, 0.04f, 0.12f, 0.2f, 0.85f);
+        drawHUDRect(vibX + 8f, capsuleY + 6f, capsuleW - 16f, capsuleH - 12f, vibWarn, 0.6f, 0.25f, 0.9f);
+        drawHUDText("SHAFT VIB", vibX + 12f, capsuleY + capsuleH - 14f, 2, 0.8f, 0.95f, 1f, 1f);
+        drawHUDText(String.format("%.2f G", pumpConsoleVibration), vibX + 12f, capsuleY + 12f, 2, 0.95f, 0.95f, 0.75f, 1f);
+
+        float cavY = capsuleY + capsuleH + 18f;
+        drawHUDRect(leftColumnX + 20f, cavY, leftColumnW - 40f, 42f, 0.2f, 0.05f, 0.05f, 0.85f);
+        float cavFill = (leftColumnW - 76f) * Math.min(1f, pumpConsoleCavitationRisk);
+        drawHUDRect(leftColumnX + 28f, cavY + 10f, leftColumnW - 56f, 12f, 0.1f, 0.15f, 0.18f, 0.7f);
+        drawHUDRect(leftColumnX + 28f, cavY + 10f, cavFill, 12f, 0.9f, Math.max(0.2f, 1f - pumpConsoleCavitationRisk), 0.15f, 0.95f);
+        drawHUDText("CAVITATION RISK", leftColumnX + 32f, cavY + 28f, 2, 0.9f, 0.85f, 0.6f, 1f);
+        drawHUDText(String.format("%d %%", (int)(pumpConsoleCavitationRisk * 100f)), leftColumnX + leftColumnW - 90f, cavY + 12f, 2, 1f, 0.9f, 0.6f, 1f);
+
+        float coreX = leftColumnX + leftColumnW + 44f;
+        float coreY = leftColumnY;
+        float coreW = bezelW * 0.32f;
+        float coreH = leftColumnH;
+        drawHUDRect(coreX, coreY, coreW, coreH, 0.02f, 0.06f, 0.09f, 0.85f);
+        drawHUDRect(coreX + 12f, coreY + 40f, coreW - 24f, coreH - 80f, 0.01f, 0.14f, 0.22f, 0.7f);
+
+        for (int ring = 0; ring < 4; ring++) {
+            float inset = 20f + ring * 22f;
+            drawHUDRect(coreX + inset, coreY + inset + 12f, coreW - inset * 2f, coreH - inset * 2f - 24f,
+                0.04f + ring * 0.02f, 0.16f + ring * 0.03f, 0.24f + ring * 0.05f, 0.15f);
+        }
+        drawHUDRect(coreX + coreW / 2f - 1f, coreY + 36f, 2f, coreH - 72f, 0.15f, 0.75f, 0.85f, 0.4f);
+        drawHUDRect(coreX + 24f, coreY + coreH / 2f - 1f, coreW - 48f, 2f, 0.15f, 0.75f, 0.85f, 0.4f);
+
+        float avgFlow = (pumpConsoleFlowA + pumpConsoleFlowB) * 0.5f;
+        float deltaFlow = pumpConsoleFlowA - pumpConsoleFlowB;
+        drawHUDText("FLOW FIELD", coreX + 28f, coreY + coreH - 28f, 2, 0.8f, 0.95f, 1f, 1f);
+        drawHUDText(String.format("AVG %.0f %%", avgFlow), coreX + 28f, coreY + coreH - 58f, 3, 0.95f, 0.95f, 0.7f, 1f);
+        drawHUDText(String.format("DELTA %+4.1f %%", deltaFlow), coreX + 28f, coreY + coreH - 88f, 2, 0.9f, 0.8f, 0.5f, 1f);
+
+        float trimBaseY = coreY + 90f;
+        drawHUDRect(coreX + 32f, trimBaseY, coreW - 64f, 62f, 0.04f, 0.12f, 0.18f, 0.85f);
+        float trimSpan = coreW - 80f;
+        float trimAFrac = (pumpConsoleTrimA + 20f) / 40f;
+        float trimBFrac = (pumpConsoleTrimB + 20f) / 40f;
+        drawHUDRect(coreX + 40f, trimBaseY + 14f, trimSpan, 6f, 0.2f, 0.2f, 0.3f, 0.8f);
+        drawHUDRect(coreX + 40f, trimBaseY + 14f, trimSpan * trimAFrac, 6f, 0.8f, 0.55f, 0.2f, 0.9f);
+        drawHUDRect(coreX + 40f, trimBaseY + 34f, trimSpan, 6f, 0.2f, 0.2f, 0.3f, 0.8f);
+        drawHUDRect(coreX + 40f, trimBaseY + 34f, trimSpan * trimBFrac, 6f, 0.2f, 0.7f, 0.9f, 0.9f);
+        drawHUDText(String.format("TRIM A %+.1f%%", pumpConsoleTrimA), coreX + 44f, trimBaseY + 48f, 2, 0.9f, 0.85f, 0.65f, 1f);
+        drawHUDText(String.format("TRIM B %+.1f%%", pumpConsoleTrimB), coreX + 44f, trimBaseY + 22f, 2, 0.8f, 0.95f, 1f, 1f);
+
+        float alertBoxY = coreY + 24f;
+        float alertWidth = coreW - 64f;
+        float alertFill = alertWidth * Math.min(1f, pumpConsoleAlertLevel);
+        drawHUDRect(coreX + 32f, alertBoxY, alertWidth, 30f, 0.2f, 0.05f, 0.05f, 0.85f);
+        drawHUDRect(coreX + 32f, alertBoxY, alertFill, 30f, 0.95f, 0.45f, 0.15f, 0.9f);
+        drawHUDText(String.format("ALERT VECTOR %.0f%%", pumpConsoleAlertLevel * 100f), coreX + 38f, alertBoxY + 8f, 2, 1f, 0.9f, 0.7f, 1f);
+
+        float controlColumnX = coreX + coreW + 40f;
+        float controlColumnW = bezelX + bezelW - controlColumnX - 36f;
+        float controlColumnTop = bezelY + bezelH - 120f;
+        float controlHeight = 68f;
+        float controlGap = 16f;
+        String[] pumpControlNames = {
+            "PUMP A SPEED TRIM: " + String.format("%+.1f%%", pumpConsoleTrimA),
+            "PUMP B SPEED TRIM: " + String.format("%+.1f%%", pumpConsoleTrimB),
+            "CROSSFLOW HEADER: " + (pumpConsoleCrossfeedOpen ? "OPEN" : "SHUT"),
+            "EMERGENCY FLUSH: " + (pumpConsoleEmergencyFlush ? "ARMED" : "SAFE"),
+            pumpConsoleDiagnosticsActive ? "DIAGNOSTIC: RUNNING" : "RUN FLOW DIAGNOSTIC"
+        };
+        String[] pumpControlHints = {
+            "Balances suction on A loop",
+            "Maintains standby circulation",
+            pumpConsoleCrossfeedOpen ? "LEFT-CLICK TO ISOLATE" : "RIGHT-CLICK TO OPEN",
+            pumpConsoleEmergencyFlush ? "LEFT-CLICK TO SAFE" : "RIGHT-CLICK TO ARM",
+            pumpConsoleDiagnosticsActive ? "ANALYZING CAVITATION" : (pumpConsoleDiagnosticsProgress > 0.05f ? "READY - LAST REPORT OK" : "CLICK TO START")
+        };
+
+        for (int i = 0; i < pumpControlNames.length; i++) {
+            float cardTop = controlColumnTop - i * (controlHeight + controlGap);
+            float cardBottom = cardTop - controlHeight;
+            boolean hovered = (machineMouseX >= controlColumnX + 8f && machineMouseX <= controlColumnX + controlColumnW - 8f &&
+                machineMouseY >= cardBottom && machineMouseY <= cardTop);
+            if (hovered) pumpConsoleSelection = i;
+            boolean selected = (pumpConsoleSelection == i);
+
+            drawHUDRect(controlColumnX, cardBottom, controlColumnW, controlHeight, 0.05f, 0.05f, 0.08f, 0.8f);
+            float accent = selected ? 0.85f : (hovered ? 0.55f : 0.25f);
+            drawHUDRect(controlColumnX + 6f, cardBottom + 6f, 6f, controlHeight - 12f, 0.65f, 0.9f * accent, 0.4f * accent, 1f);
+            if (selected || hovered) {
+                drawHUDRect(controlColumnX + 18f, cardBottom + 6f, controlColumnW - 36f, controlHeight - 12f,
+                    selected ? 0.18f : 0.12f,
+                    selected ? 0.4f : 0.22f,
+                    selected ? 0.3f : 0.2f,
+                    selected ? 0.85f : 0.6f);
+            }
+            drawHUDText(pumpControlNames[i], controlColumnX + 32f, cardBottom + controlHeight - 18f, 2,
+                0.9f, 0.95f, 0.75f, 1f);
+            drawHUDText(pumpControlHints[i], controlColumnX + 32f, cardBottom + 12f, 2, 0.65f, 0.8f, 0.75f, 0.95f);
+        }
+
+        float diagBoxTop = controlColumnTop - pumpControlNames.length * (controlHeight + controlGap) - 20f;
+        drawHUDRect(controlColumnX, diagBoxTop - 80f, controlColumnW, 72f, 0.03f, 0.08f, 0.12f, 0.85f);
+        drawHUDText("FLOW DIAGNOSTIC", controlColumnX + 18f, diagBoxTop - 26f, 2, 0.8f, 0.95f, 1f, 1f);
+        drawHUDRect(controlColumnX + 18f, diagBoxTop - 54f, controlColumnW - 36f, 12f, 0.15f, 0.25f, 0.32f, 0.8f);
+        float diagFillW = (controlColumnW - 36f) * Math.min(1f, pumpConsoleDiagnosticsProgress);
+        drawHUDRect(controlColumnX + 18f, diagBoxTop - 54f, diagFillW, 12f, 0.25f, 0.85f, 0.55f, 1f);
+        drawHUDText(pumpConsoleDiagnosticsActive ? "RUNNING" : (pumpConsoleDiagnosticsProgress >= 1f ? "COMPLETE" : "STANDBY"),
+            controlColumnX + 18f, diagBoxTop - 70f, 2, 0.7f, 0.95f, 0.7f, 1f);
+
+        drawHUDText("ARROWS / MOUSE NAV   L-CLICK=DECREASE   R-CLICK=INCREASE   SPACE=RUN DIAGNOSTIC",
+            bezelX + 32f, bezelY + 24f, 2, 0.6f, 0.85f, 0.75f, 0.9f);
+
+        if (machineLogTimer > 0 && !machineLogMessage.isEmpty()) {
+            float logW = machineLogMessage.length() * 11f + 40f;
+            float logX = bezelX + (bezelW - logW) / 2f;
+            float logAlpha = Math.min(1f, machineLogTimer);
+            drawHUDRect(logX, bezelY + bezelH - 128f, logW, 28f, 0.09f, 0.2f, 0.24f, logAlpha * 0.9f);
+            drawHUDText(machineLogMessage, logX + 14f, bezelY + bezelH - 118f, 2, 0.8f, 0.95f, 0.85f, logAlpha);
+        }
+
+        drawHUDText("ESC TO CLOSE", bezelX + bezelW - 180f, bezelY + 24f, 2, 0.5f, 0.75f, 0.5f, 1f);
     }
     
     // Generate individual ELENA cell with status indicator and label
@@ -6236,10 +6842,10 @@ public class ChernobylGameCore {
         }
         
         // === FRONT WALL (-Z) - With door opening to corridor ===
-        // Door opening at x = -2 to 2 (4 blocks wide), h = 0 to 3 (3 blocks tall)
+        // Door opening at x = -2 to 2 (4 blocks wide), h = 0 to 5 (5 blocks tall)
         for (int x = -roomWidth; x <= roomWidth; x++) {
             for (int h = 0; h < wallHeight; h++) {
-                boolean isDoorOpening = (x >= -2 && x <= 2 && h < 3);
+                boolean isDoorOpening = (x >= -2 && x <= 2 && h < 5);
                 if (!isDoorOpening) {
                     addTexturedCube(x * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
                            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
@@ -6247,11 +6853,11 @@ public class ChernobylGameCore {
             }
         }
         // Door frame accent (dark metal around the opening)
-        addTexturedCube(-2.5f * BLOCK_SIZE, 1.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
-               BLOCK_SIZE * 0.3f, 3 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
-        addTexturedCube(2.5f * BLOCK_SIZE, 1.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
-               BLOCK_SIZE * 0.3f, 3 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
-        addTexturedCube(0, 3f * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
+        addTexturedCube(-2.5f * BLOCK_SIZE, 2.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
+               BLOCK_SIZE * 0.3f, 5 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
+        addTexturedCube(2.5f * BLOCK_SIZE, 2.5f * BLOCK_SIZE, -roomDepth * BLOCK_SIZE,
+               BLOCK_SIZE * 0.3f, 5 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, "iron_block");
+        addTexturedCube(0, 5f * BLOCK_SIZE + BLOCK_SIZE/2, -roomDepth * BLOCK_SIZE,
                5 * BLOCK_SIZE, BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.3f, "iron_block");
         
         // === LEFT WALL (-X) - With observation window ===
@@ -6407,6 +7013,14 @@ public class ChernobylGameCore {
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, texture);
             }
         }
+
+        // === Alarm beacons mounted near ceiling corners and doorway ===
+        float sirenHeight = wallHeight * BLOCK_SIZE - 40f;
+        float inset = BLOCK_SIZE * 1.5f;
+        createAlarmLight(-roomWidth * BLOCK_SIZE + inset, sirenHeight, roomDepth * BLOCK_SIZE - inset);
+        createAlarmLight(roomWidth * BLOCK_SIZE - inset, sirenHeight, roomDepth * BLOCK_SIZE - inset);
+        createAlarmLight(-roomWidth * BLOCK_SIZE + inset, sirenHeight, -roomDepth * BLOCK_SIZE + inset);
+        createAlarmLight(roomWidth * BLOCK_SIZE - inset, sirenHeight, -roomDepth * BLOCK_SIZE + inset);
         
         // === LABELS on desk sections (red labels like 1A, 2A, etc.) ===
         float labelY = deskHeight + BLOCK_SIZE * 0.5f;
@@ -6561,7 +7175,7 @@ public class ChernobylGameCore {
         for (int x = 0; x < hallWidth; x++) {
             for (int h = 0; h < hallHeight; h++) {
                 // -Z side wall: leave doorway opening for walkway at x=1,2,3 (positions -18,-19,-20 BS)
-                boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < 3);
+                boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < 5);
                 if (!isWalkwayDoor) {
                     addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
                            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
@@ -6628,8 +7242,8 @@ public class ChernobylGameCore {
                 addTexturedCube((cw + 1) * BLOCK_SIZE, h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
             }
-            // Ceiling
-            for (int x = -cw; x <= cw; x++) {
+            // Ceiling (extend over walls at x=-(cw+1) to cw+1 to seal corridor)
+            for (int x = -(cw + 1); x <= (cw + 1); x++) {
                 boolean isLight = (z % 4 == 0) && (x == 0);
                 String tex = isLight ? "fluorescent_light" : "gray_concrete";
                 addTexturedCube(x * BLOCK_SIZE, wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
@@ -6644,6 +7258,17 @@ public class ChernobylGameCore {
         addTexturedCube(cw * BLOCK_SIZE - BLOCK_SIZE * 0.3f,
                (wallH - 0.5f) * BLOCK_SIZE, -23 * BLOCK_SIZE,
                BLOCK_SIZE * 0.15f, BLOCK_SIZE * 0.15f, 11 * BLOCK_SIZE, "iron_block");
+
+        // SEAL: add continuous back wall slabs behind left and right corridor walls
+        // to prevent any hairline gaps between block edges
+        // Left side slab: x=-3, runs from z=-12 to z=-34, floor to ceiling
+        addTexturedCube((-cw - 1) * BLOCK_SIZE, wallH * BLOCK_SIZE / 2, -23 * BLOCK_SIZE,
+               BLOCK_SIZE, wallH * BLOCK_SIZE + BLOCK_SIZE, 23 * BLOCK_SIZE, "soviet_gray_wall");
+        // Right side slab
+        addTexturedCube((cw + 1) * BLOCK_SIZE, wallH * BLOCK_SIZE / 2, -23 * BLOCK_SIZE,
+               BLOCK_SIZE, wallH * BLOCK_SIZE + BLOCK_SIZE, 23 * BLOCK_SIZE, "soviet_gray_wall");
+
+         // Right corridor wall now stays sealed where the locker doorway was
 
 
 
@@ -6660,25 +7285,33 @@ public class ChernobylGameCore {
                 addTexturedCube(x * BLOCK_SIZE, floorY - stepDrop/2 + 5, z * BLOCK_SIZE,
                        BLOCK_SIZE, stepDrop + 10, BLOCK_SIZE, "reactor_step_metal");
             }
-            // Walls follow the descent — tall enough to cover full height
+            // Walls follow the descent — extend from bottom of stairs to corridor ceiling level
+            // to ensure no gaps are visible from any angle
             float wallBase = Math.min(floorY, hallFloorY);
-            float wallTop = floorY + wallH * BLOCK_SIZE + BLOCK_SIZE;
-            float wallTotalH = wallTop - wallBase;
+            float wallTopY = wallH * BLOCK_SIZE + BLOCK_SIZE; // always reach corridor ceiling level
+            float wallTotalH = wallTopY - wallBase;
             addTexturedCube((-cw - 1) * BLOCK_SIZE, wallBase + wallTotalH/2, z * BLOCK_SIZE,
                    BLOCK_SIZE, wallTotalH, BLOCK_SIZE, "soviet_gray_wall");
             addTexturedCube((cw + 1) * BLOCK_SIZE, wallBase + wallTotalH/2, z * BLOCK_SIZE,
                    BLOCK_SIZE, wallTotalH, BLOCK_SIZE, "soviet_gray_wall");
-            // Ceiling follows descent
-            for (int x = -cw; x <= cw; x++) {
+            // Ceiling: each block extends from local ceiling height up to corridor ceiling level,
+            // creating a solid wedge that seals all gaps
+            float localCeilY = floorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2;
+            float corridorCeilY = wallH * BLOCK_SIZE + BLOCK_SIZE/2; // flat corridor ceiling at y=0 level
+            float ceilBlockH = corridorCeilY - localCeilY + BLOCK_SIZE; // tall enough to fill gap
+            float ceilCenterY = (localCeilY + corridorCeilY) / 2.0f;
+            for (int x = -(cw + 1); x <= (cw + 1); x++) {
                 boolean isLight = (z % 3 == 0) && (x == 0);
-                addTexturedCube(x * BLOCK_SIZE, floorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                // Bottom visible face at localCeilY, extends up to corridor ceiling
+                addTexturedCube(x * BLOCK_SIZE, ceilCenterY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, ceilBlockH, BLOCK_SIZE,
                        isLight ? "fluorescent_light" : "gray_concrete");
             }
         }
 
         // Stair handrails
         for (int z = -34; z >= -42; z--) {
+            if (z == -42) continue; // keep landing clear of handrail posts
             float t = (float)(z - (-34)) / (float)(-42 - (-34));
             float floorY = t * hallFloorY;
             addTexturedCube((-cw - 0.3f) * BLOCK_SIZE, floorY + BLOCK_SIZE * 0.9f, z * BLOCK_SIZE,
@@ -6687,40 +7320,61 @@ public class ChernobylGameCore {
                    BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.08f, "iron_block");
         }
 
+        // SEAL: continuous stairwell wall slabs from z=-34 to z=-42, floor-to-ceiling
+        // Left + right wall slabs
+        {
+            float slabBase = hallFloorY; // -180
+            float slabTop = wallH * BLOCK_SIZE + BLOCK_SIZE; // 350
+            float slabH = slabTop - slabBase;
+            // Left slab: z=-34 to z=-42 ONLY (landing is open left for the left arm)
+            float leftSlabCenterZ = (-34 * BLOCK_SIZE + -42 * BLOCK_SIZE) / 2.0f;
+            float leftSlabLenZ = 9 * BLOCK_SIZE;
+            addTexturedCube((-cw - 1) * BLOCK_SIZE, slabBase + slabH / 2, leftSlabCenterZ,
+                   BLOCK_SIZE, slabH, leftSlabLenZ, "soviet_gray_wall");
+                 // Right slab: keep the stair enclosure solid down to z=-42, but leave the landing open
+                 float rightSlabUpperCenterZ = (-34 * BLOCK_SIZE + -42 * BLOCK_SIZE) / 2.0f;
+                 float rightSlabUpperLenZ = 9 * BLOCK_SIZE;
+                 addTexturedCube((cw + 1) * BLOCK_SIZE, slabBase + slabH / 2, rightSlabUpperCenterZ,
+                     BLOCK_SIZE, slabH, rightSlabUpperLenZ, "soviet_gray_wall");
+        }
+
         // ============================================================
         // SECTION 3: BOTTOM LANDING + TURN LEFT (z = -42 to -46, y = -180)
         // The corridor widens into a landing at the bottom of stairs,
         // then opens LEFT (-X direction)
         // ============================================================
         for (int z = -42; z >= -46; z--) {
-            for (int x = -cw; x <= cw; x++) {
+            // Floor — extend to x=-3 so player can walk to left arm
+            for (int x = -(cw + 1); x <= cw; x++) {
                 addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
                        BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
             }
-            // Right wall
-            for (int h = 0; h < wallH; h++) {
-                addTexturedCube((cw + 1) * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
-            }
-            // Ceiling
-            for (int x = -cw; x <= cw; x++) {
-                addTexturedCube(x * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "gray_concrete");
+            // Right wall — extend from hallFloorY all the way up to corridor ceiling
+            // Ceiling — extend from landing ceiling up to corridor ceiling to seal
+            float landingCeilY = hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE / 2;
+            float corridorCeilY2 = wallH * BLOCK_SIZE + BLOCK_SIZE / 2;
+            float cBlockH = corridorCeilY2 - landingCeilY + BLOCK_SIZE;
+            float cCenterY = (landingCeilY + corridorCeilY2) / 2.0f;
+            for (int x = -(cw + 1); x <= (cw + 1); x++) {
+                addTexturedCube(x * BLOCK_SIZE, cCenterY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, cBlockH, BLOCK_SIZE, "gray_concrete");
             }
         }
-        // Far wall at z = -46 to close the landing
-        for (int x = -cw; x <= cw; x++) {
-            for (int h = 0; h < wallH; h++) {
-                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
-            }
+        // Far wall at z = -46 to close the landing (full width including wall positions)
+        for (int x = -(cw + 1); x <= (cw + 1); x++) {
+            // Far wall: extend from hallFloorY up to corridor ceiling level
+            float fwBase = hallFloorY;
+            float fwTop = wallH * BLOCK_SIZE + BLOCK_SIZE;
+            float fwH = fwTop - fwBase;
+            addTexturedCube(x * BLOCK_SIZE, fwBase + fwH / 2, -46 * BLOCK_SIZE,
+                   BLOCK_SIZE, fwH, BLOCK_SIZE, "soviet_gray_wall");
         }
 
         // ============================================================
         // SECTION 4: LEFT ARM (going -X at y=-180, z from -42 to -46)
         // From x = -cw-1 to x = -17 (enters reactor hall's open window side)
         // ============================================================
-        for (int x = -cw - 1; x >= -18; x--) {
+        for (int x = -cw - 2; x >= -18; x--) {
             for (int z = -42; z >= -46; z--) {
                 addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
                        BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
@@ -6729,15 +7383,50 @@ public class ChernobylGameCore {
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
                        (z == -44 && x % 4 == 0) ? "fluorescent_light" : "gray_concrete");
             }
-            // Near wall (z = -42 side)
-            for (int h = 0; h < wallH; h++) {
-                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -42 * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            // z=-42 wall — closes left arm from stairwell. Full height to corridor ceiling.
+            // Stop before x=-18 where the walkway connects
+            if (x <= -cw - 2 && x > -18) {
+                float armWallBase = hallFloorY;
+                float armWallTop = wallH * BLOCK_SIZE + BLOCK_SIZE;
+                float armWallH = armWallTop - armWallBase;
+                addTexturedCube(x * BLOCK_SIZE, armWallBase + armWallH / 2, -42 * BLOCK_SIZE,
+                       BLOCK_SIZE, armWallH, BLOCK_SIZE, "soviet_gray_wall");
             }
-            // Far wall (z = -46 side)
-            for (int h = 0; h < wallH; h++) {
-                addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+            // Far wall (z = -46 side) — full height to corridor ceiling
+            // Stop before x=-18 where the walkway connects
+            if (x > -18) {
+                float fwBase = hallFloorY;
+                float fwTop = wallH * BLOCK_SIZE + BLOCK_SIZE;
+                float fwH = fwTop - fwBase;
+                addTexturedCube(x * BLOCK_SIZE, fwBase + fwH / 2, -46 * BLOCK_SIZE,
+                       BLOCK_SIZE, fwH, BLOCK_SIZE, "soviet_gray_wall");
+            }
+        }
+
+        // Mirror corridor arm on +X side leading toward pump annex walkway
+        for (int x = cw; x <= 18; x++) {
+            for (int z = -42; z >= -46; z--) {
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                       BLOCK_SIZE, 10, BLOCK_SIZE, "gray_concrete");
+                addTexturedCube(x * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                       (z == -44 && x % 4 == 0) ? "fluorescent_light" : "gray_concrete");
+            }
+            // Far wall at z = -46 — keep closed until the walkway takes over
+            if (x < 18) {
+                float fwBase = hallFloorY;
+                float fwTop = wallH * BLOCK_SIZE + BLOCK_SIZE;
+                float fwH = fwTop - fwBase;
+                addTexturedCube(x * BLOCK_SIZE, fwBase + fwH / 2, -46 * BLOCK_SIZE,
+                       BLOCK_SIZE, fwH, BLOCK_SIZE, "soviet_gray_wall");
+            }
+            // z=-42 wall — mirror of the reactor-side wall, leave opening exactly where the pump walkway begins
+            if (x >= cw + 1 && x < 18) {
+                float armWallBase = hallFloorY;
+                float armWallTop = wallH * BLOCK_SIZE + BLOCK_SIZE;
+                float armWallH = armWallTop - armWallBase;
+                addTexturedCube(x * BLOCK_SIZE, armWallBase + armWallH / 2, -42 * BLOCK_SIZE,
+                       BLOCK_SIZE, armWallH, BLOCK_SIZE, "soviet_gray_wall");
             }
         }
 
@@ -6747,33 +7436,86 @@ public class ChernobylGameCore {
 
         // ============================================================
         // SECTION 5: CONNECTING WALKWAY from left arm to reactor hall
-        // At x=-18, the left arm connects. From here build a walkway
-        // going +Z (towards z=0) to reach the reactor hall floor
-        // which spans z from -12 to +12
-        // Walkway: x = -18 to -20, z from -42 to -12
+        // Extends from z=-46 (far wall) to z=-12 (reactor hall entry)
+        // at x = -18 to -20, forming the vertical bar of the L-shape
+        // Walkway: x = -18 to -20, z from -46 to -12
         // ============================================================
-        for (int z = -42; z <= -12; z++) {
+        for (int z = -46; z <= -12; z++) {
             for (int x = -18; x >= -20; x--) {
+                // Skip floor where left arm already placed it (x=-18, z=-42 to -46)
+                if (x == -18 && z <= -42) continue;
                 addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
                        BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
             }
-            // Left wall (only where there's no reactor hall already — the hall floor starts at x=-17)
-            // The walkway runs along the outside of the reactor hall
+            // Left wall
             for (int h = 0; h < wallH; h++) {
                 addTexturedCube(-21 * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
             }
-            // Right side is open (connects to reactor hall space)
-            // Ceiling
-            addTexturedCube(-19 * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
-                   2 * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
-                   (z % 6 == 0) ? "fluorescent_light" : "gray_concrete");
+            // Right wall (prevent falling off walkway into void)
+            // Only along the walkway stretch, not at the turn corner (z=-42 to -46 is open to left arm)
+            if (z < -12 && z >= -45) {
+                for (int h = 0; h < wallH; h++) {
+                    addTexturedCube(-17 * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
+            }
+            // Ceiling — cover full walkway width
+            for (int cx = -18; cx >= -20; cx--) {
+                addTexturedCube(cx * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                       (z % 6 == 0 && cx == -19) ? "fluorescent_light" : "gray_concrete");
+            }
         }
-        // Right side railing along walkway (separating from reactor hall)
-        for (int z = -42; z <= -13; z += 3) {
-            addTexturedCube(-17.5f * BLOCK_SIZE, hallFloorY + BLOCK_SIZE * 0.5f, z * BLOCK_SIZE,
-                   BLOCK_SIZE * 0.1f, BLOCK_SIZE * 0.9f, BLOCK_SIZE * 0.1f, "iron_block");
-        }
+
+         // Far wall closing walkway at z=-46 for x=-19,-20
+         for (int x = -19; x >= -20; x--) {
+             for (int h = 0; h < wallH; h++) {
+              addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+             }
+         }
+
+         // ============================================================
+         // SECTION 5B: Pump annex access walkway on +X side (mirror)
+         // ============================================================
+         for (int z = -46; z <= -12; z++) {
+             for (int x = 18; x <= 20; x++) {
+              if (x == 18 && z <= -42) continue;
+              addTexturedCube(x * BLOCK_SIZE, hallFloorY, z * BLOCK_SIZE,
+                  BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+             }
+             // Inner wall (toward the landing) — skip near the open turn
+             if (z < -12 && z >= -41) {
+              for (int h = 0; h < wallH; h++) {
+                  addTexturedCube(PUMP_WALKWAY_INNER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+              }
+             }
+             // Outer wall (prevent falling into annex void) — extend closer to the landing so the corner is sealed
+             if (z < -12 && z >= -45) {
+              for (int h = 0; h < wallH; h++) {
+                  addTexturedCube(PUMP_WALKWAY_OUTER_WALL, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+              }
+             }
+             // Ceiling tiles
+             for (int cx = 18; cx <= 20; cx++) {
+              addTexturedCube(cx * BLOCK_SIZE, hallFloorY + wallH * BLOCK_SIZE + BLOCK_SIZE/2, z * BLOCK_SIZE,
+                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE,
+                  (z % 6 == 0 && cx == 19) ? "fluorescent_light" : "gray_concrete");
+             }
+         }
+
+         for (int x = 18; x <= 20; x++) {
+             for (int h = 0; h < wallH; h++) {
+              addTexturedCube(x * BLOCK_SIZE, hallFloorY + h * BLOCK_SIZE + BLOCK_SIZE/2, -46 * BLOCK_SIZE,
+                  BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "soviet_gray_wall");
+             }
+         }
+
+        // Build optional explorable rooms off the corridor
+        buildPumpServiceAnnex();
 
 
 
@@ -6786,6 +7528,217 @@ public class ChernobylGameCore {
             -6 * BLOCK_SIZE,        // z: midway along walkway, near reactor
             0.0f,                   // facing: towards +Z (looking along the reactor hall)
             "perevozchenko_head", "perevozchenko_body", "perevozchenko_legs", "perevozchenko_arms");
+    }
+
+    private void buildPumpServiceAnnex() {
+        int minGridX = Math.round(PUMP_ANNEX_MIN_X / BLOCK_SIZE);
+        int maxGridX = Math.round(PUMP_ANNEX_MAX_X / BLOCK_SIZE);
+        int minGridZ = Math.round(PUMP_ANNEX_MIN_Z / BLOCK_SIZE);
+        int maxGridZ = Math.round(PUMP_ANNEX_MAX_Z / BLOCK_SIZE);
+        float floorY = REACTOR_HALL_FLOOR_Y;
+        // Raise annex ceiling one block higher than the corridor so the room breathes a bit
+        int wallHeight = 6;
+        int walkwayOpenMinGX = Math.round(PUMP_WALKWAY_X_MIN / BLOCK_SIZE);
+        int walkwayOpenMaxGX = Math.round(PUMP_WALKWAY_X_MAX / BLOCK_SIZE);
+        int walkwayEntranceGZ = Math.round(PUMP_ANNEX_MIN_Z / BLOCK_SIZE);
+
+        for (int gx = minGridX; gx <= maxGridX; gx++) {
+            for (int gz = minGridZ; gz <= maxGridZ; gz++) {
+                addTexturedCube(gx * BLOCK_SIZE, floorY, gz * BLOCK_SIZE,
+                    BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
+            }
+        }
+
+        // Concrete walls (leave an opening at the walkway interface, similar to the reactor hall)
+        for (int h = 0; h < wallHeight; h++) {
+            for (int gz = minGridZ; gz <= maxGridZ; gz++) {
+                addTexturedCube(PUMP_ANNEX_MAX_X, floorY + h * BLOCK_SIZE + BLOCK_SIZE / 2f, gz * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                boolean walkwayOpening = (gz == walkwayEntranceGZ);
+                if (!(walkwayOpening)) {
+                    addTexturedCube(PUMP_ANNEX_MIN_X, floorY + h * BLOCK_SIZE + BLOCK_SIZE / 2f, gz * BLOCK_SIZE,
+                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
+            }
+            for (int gx = minGridX; gx <= maxGridX; gx++) {
+                boolean walkwayOpening = (gx >= walkwayOpenMinGX && gx <= walkwayOpenMaxGX);
+                if (!(walkwayOpening)) {
+                    addTexturedCube(gx * BLOCK_SIZE, floorY + h * BLOCK_SIZE + BLOCK_SIZE / 2f, PUMP_ANNEX_MIN_Z,
+                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
+                addTexturedCube(gx * BLOCK_SIZE, floorY + h * BLOCK_SIZE + BLOCK_SIZE / 2f, PUMP_ANNEX_MAX_Z,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+            }
+        }
+
+        // Ceiling with utilitarian lights
+        for (int gx = minGridX; gx <= maxGridX; gx++) {
+            for (int gz = minGridZ; gz <= maxGridZ; gz++) {
+                boolean light = ((gx - minGridX) % 3 == 1) && ((gz - minGridZ) % 2 == 0);
+                String tex = light ? "fluorescent_light" : "gray_concrete";
+                addTexturedCube(gx * BLOCK_SIZE, floorY + wallHeight * BLOCK_SIZE + BLOCK_SIZE / 2f, gz * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, tex);
+            }
+        }
+
+        // Structured annex layout: clear travel lane, discrete pump pods, and a staged console dais
+        float annexCenterX = (PUMP_ANNEX_MIN_X + PUMP_ANNEX_MAX_X) * 0.5f;
+        float annexCenterZ = (PUMP_ANNEX_MIN_Z + PUMP_ANNEX_MAX_Z) * 0.5f;
+        float annexSpanX = PUMP_ANNEX_MAX_X - PUMP_ANNEX_MIN_X;
+        float annexSpanZ = PUMP_ANNEX_MAX_Z - PUMP_ANNEX_MIN_Z;
+
+        // Low-profile maintenance spine keeps the circulation lane clean
+        float spineLength = annexSpanZ - BLOCK_SIZE * 5.6f;
+        addTexturedCube(annexCenterX, floorY + BLOCK_SIZE * 0.04f, annexCenterZ,
+            BLOCK_SIZE * 0.9f, BLOCK_SIZE * 0.12f, spineLength, "reactor_floor_metal");
+        addTexturedCube(annexCenterX, floorY + BLOCK_SIZE * 0.12f, annexCenterZ,
+            BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.04f, spineLength - BLOCK_SIZE * 0.8f, "glass");
+        for (int dir = -1; dir <= 1; dir += 2) {
+            float capZ = annexCenterZ + dir * (spineLength * 0.5f - BLOCK_SIZE * 0.6f);
+            addTexturedCube(annexCenterX, floorY + BLOCK_SIZE * 0.2f, capZ,
+                BLOCK_SIZE * 0.7f, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.4f, "warning_label");
+            addTexturedCube(annexCenterX, floorY + BLOCK_SIZE * 0.32f, capZ,
+                BLOCK_SIZE * 0.6f, BLOCK_SIZE * 0.1f, BLOCK_SIZE * 0.18f, "glass");
+        }
+
+        // Wall ribs echo the rhythm of the control room columns for cohesion
+        for (int side = -1; side <= 1; side += 2) {
+            float ribX = (side < 0 ? PUMP_ANNEX_MIN_X + BLOCK_SIZE * 0.7f : PUMP_ANNEX_MAX_X - BLOCK_SIZE * 0.7f);
+            for (int seg = -1; seg <= 1; seg++) {
+                float ribZ = annexCenterZ + seg * BLOCK_SIZE * 2.6f;
+                addTexturedCube(ribX, floorY + BLOCK_SIZE * 1.8f, ribZ,
+                    BLOCK_SIZE * 0.25f, BLOCK_SIZE * 3.0f, BLOCK_SIZE * 0.25f, "iron_block");
+            }
+        }
+
+        // Cable troughs hug the perimeter walls for a cleaner floor plate
+        float troughLength = annexSpanZ - BLOCK_SIZE * 2.5f;
+        addTexturedCube(PUMP_ANNEX_MIN_X + BLOCK_SIZE * 0.55f, floorY + BLOCK_SIZE * 0.35f, annexCenterZ,
+            BLOCK_SIZE * 0.35f, BLOCK_SIZE * 0.5f, troughLength, "cable_tray");
+        addTexturedCube(PUMP_ANNEX_MAX_X - BLOCK_SIZE * 0.55f, floorY + BLOCK_SIZE * 0.35f, annexCenterZ,
+            BLOCK_SIZE * 0.35f, BLOCK_SIZE * 0.5f, troughLength, "cable_tray");
+
+        // Discrete pump pods on each side of the lane
+        float[] podRows = { annexCenterZ - BLOCK_SIZE * 3.2f, annexCenterZ + BLOCK_SIZE * 3.2f };
+        for (float podZ : podRows) {
+            for (int side = -1; side <= 1; side += 2) {
+                float podX = annexCenterX + side * BLOCK_SIZE * 3.6f;
+                addTexturedCube(podX, floorY + BLOCK_SIZE * 0.55f, podZ,
+                    BLOCK_SIZE * 1.8f, BLOCK_SIZE * 0.9f, BLOCK_SIZE * 2.4f, "reactor_floor_metal");
+                addTexturedCube(podX + side * BLOCK_SIZE * 0.4f, floorY + BLOCK_SIZE * 1.25f, podZ - BLOCK_SIZE * 0.3f,
+                    BLOCK_SIZE * 1.2f, BLOCK_SIZE * 1.1f, BLOCK_SIZE * 1.5f, "control_panel_gray");
+                addTexturedCube(podX - side * BLOCK_SIZE * 0.1f, floorY + BLOCK_SIZE * 2.05f, podZ + BLOCK_SIZE * 0.4f,
+                    BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.8f, BLOCK_SIZE, "hazard_stripe");
+                addTexturedCube(podX + side * BLOCK_SIZE * 0.9f, floorY + BLOCK_SIZE * 2.2f, podZ - BLOCK_SIZE * 0.6f,
+                    BLOCK_SIZE * 0.35f, BLOCK_SIZE * 2.3f, BLOCK_SIZE * 0.35f, "iron_block");
+                addTexturedCube(podX + side * BLOCK_SIZE * 0.9f, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 1.0f, podZ - BLOCK_SIZE * 0.6f,
+                    BLOCK_SIZE * 0.9f, BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.4f, "cable_tray");
+                float sensorX = podX - side * BLOCK_SIZE * 0.95f;
+                float sensorZ = podZ - BLOCK_SIZE * 1.1f;
+                addTexturedCube(sensorX, floorY + BLOCK_SIZE * 1.05f, sensorZ,
+                    BLOCK_SIZE * 0.45f, BLOCK_SIZE * 1.8f, BLOCK_SIZE * 0.65f, "control_panel_dark");
+                addTexturedCube(sensorX, floorY + BLOCK_SIZE * 2.1f, sensorZ,
+                    BLOCK_SIZE * 0.6f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.9f, "glass");
+            }
+        }
+
+        // Wall wash lights keep the spine legible without adding clutter
+        float wallLightInset = BLOCK_SIZE * 0.95f;
+        for (int side = -1; side <= 1; side += 2) {
+            float wallLightX = (side < 0 ? PUMP_ANNEX_MIN_X + wallLightInset : PUMP_ANNEX_MAX_X - wallLightInset);
+            addTexturedCube(wallLightX, floorY + BLOCK_SIZE * 0.2f, annexCenterZ,
+                BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.3f, spineLength - BLOCK_SIZE * 1.4f, "glass");
+            addTexturedCube(wallLightX, floorY + BLOCK_SIZE * 0.5f, annexCenterZ,
+                BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.08f, BLOCK_SIZE * 0.4f, "warning_label");
+        }
+
+        // Entry staging pads and hose reels
+        float entryZ = PUMP_ANNEX_MIN_Z + BLOCK_SIZE * 2.4f;
+        addTexturedCube(annexCenterX - BLOCK_SIZE * 2.8f, floorY + BLOCK_SIZE * 0.9f, entryZ,
+            BLOCK_SIZE * 1.6f, BLOCK_SIZE * 1.6f, BLOCK_SIZE * 1.4f, "control_panel_dark");
+        addTexturedCube(annexCenterX + BLOCK_SIZE * 2.8f, floorY + BLOCK_SIZE * 0.9f, entryZ,
+            BLOCK_SIZE * 1.6f, BLOCK_SIZE * 1.6f, BLOCK_SIZE * 1.4f, "control_panel_dark");
+        addTexturedCube(annexCenterX, floorY + BLOCK_SIZE * 1.2f, entryZ + BLOCK_SIZE * 1.2f,
+            BLOCK_SIZE * 1.2f, BLOCK_SIZE * 2.2f, BLOCK_SIZE * 0.8f, "control_panel_gray");
+
+        // Overhead coolant manifold with risers feeding each pump row
+        addTexturedCube(annexCenterX, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 0.5f, annexCenterZ,
+            annexSpanX - BLOCK_SIZE * 4f, BLOCK_SIZE * 0.45f, BLOCK_SIZE * 0.8f, "cable_tray");
+        for (float podZ : podRows) {
+            addTexturedCube(annexCenterX - BLOCK_SIZE * 2.6f, floorY + BLOCK_SIZE * 1.6f, podZ,
+                BLOCK_SIZE * 0.4f, BLOCK_SIZE * 2.7f, BLOCK_SIZE * 0.4f, "iron_block");
+            addTexturedCube(annexCenterX + BLOCK_SIZE * 2.6f, floorY + BLOCK_SIZE * 1.6f, podZ,
+                BLOCK_SIZE * 0.4f, BLOCK_SIZE * 2.7f, BLOCK_SIZE * 0.4f, "iron_block");
+        }
+
+        // Tool crib and spare impeller crates sit at the back wall for a cleaner front half
+        float backZ = PUMP_ANNEX_MAX_Z - BLOCK_SIZE * 2f;
+        addTexturedCube(annexCenterX - BLOCK_SIZE * 3.4f, floorY + BLOCK_SIZE * 1.1f, backZ,
+            BLOCK_SIZE * 1.4f, BLOCK_SIZE * 2.0f, BLOCK_SIZE * 1.2f, "control_panel_gray");
+        addTexturedCube(annexCenterX + BLOCK_SIZE * 3.4f, floorY + BLOCK_SIZE * 0.9f, backZ,
+            BLOCK_SIZE * 1.2f, BLOCK_SIZE * 1.6f, BLOCK_SIZE * 1.8f, "iron_block");
+        addTexturedCube(annexCenterX + BLOCK_SIZE * 3.4f, floorY + BLOCK_SIZE * 1.5f, backZ + BLOCK_SIZE * 0.8f,
+            BLOCK_SIZE * 1.0f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 1.0f, "warning_label");
+
+        // Staged console dais located on the front wall
+        float daisDepth = BLOCK_SIZE * 3.6f;
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 0.45f, PUMP_CONSOLE_Z,
+            BLOCK_SIZE * 7.5f, BLOCK_SIZE * 0.9f, daisDepth, "reactor_floor_metal");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 0.18f, PUMP_CONSOLE_Z - daisDepth * 0.6f,
+            BLOCK_SIZE * 5.8f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.7f, "reactor_step");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 1.3f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.6f,
+            BLOCK_SIZE * 3.6f, BLOCK_SIZE * 2.1f, BLOCK_SIZE * 1.2f, "control_panel_dark");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 2.3f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.95f,
+            BLOCK_SIZE * 3.0f, BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.5f, "control_panel_gray");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 2.75f, PUMP_CONSOLE_Z + BLOCK_SIZE * 1.2f,
+            BLOCK_SIZE * 2.8f, BLOCK_SIZE * 0.45f, BLOCK_SIZE * 0.3f, "glass");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 3.0f, PUMP_CONSOLE_Z + BLOCK_SIZE * 1.35f,
+            BLOCK_SIZE * 3.2f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.25f, "warning_label");
+        float tabletOffsetX = BLOCK_SIZE * 2.05f;
+        for (int side = -1; side <= 1; side += 2) {
+            float tabletX = PUMP_CONSOLE_X + side * tabletOffsetX;
+            addTexturedCube(tabletX, floorY + BLOCK_SIZE * 1.35f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.5f,
+                BLOCK_SIZE * 0.9f, BLOCK_SIZE * 1.4f, BLOCK_SIZE * 0.9f, "control_panel_gray");
+            addTexturedCube(tabletX, floorY + BLOCK_SIZE * 2.05f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.85f,
+                BLOCK_SIZE * 0.8f, BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.35f, "glass");
+        }
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 0.95f, PUMP_CONSOLE_Z - BLOCK_SIZE * 0.75f,
+            BLOCK_SIZE * 3.8f, BLOCK_SIZE * 0.6f, BLOCK_SIZE * 0.9f, "control_panel_gray");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 1.25f, PUMP_CONSOLE_Z - BLOCK_SIZE * 1.05f,
+            BLOCK_SIZE * 4.0f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.35f, "iron_block");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + BLOCK_SIZE * 0.85f, PUMP_CONSOLE_Z - BLOCK_SIZE * 1.1f,
+            BLOCK_SIZE * 2.4f, BLOCK_SIZE * 0.16f, BLOCK_SIZE * 0.35f, "hazard_stripe");
+
+        // Glass canopy and signage frame the dais without cluttering the floor
+        addTexturedCube(PUMP_CONSOLE_X, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 0.9f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.9f,
+            BLOCK_SIZE * 5.2f, BLOCK_SIZE * 0.3f, BLOCK_SIZE * 0.9f, "glass");
+        addTexturedCube(PUMP_CONSOLE_X - BLOCK_SIZE * 2.5f, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 1.4f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.9f,
+            BLOCK_SIZE * 0.35f, BLOCK_SIZE * 1.1f, BLOCK_SIZE * 0.35f, "iron_block");
+        addTexturedCube(PUMP_CONSOLE_X + BLOCK_SIZE * 2.5f, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 1.4f, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.9f,
+            BLOCK_SIZE * 0.35f, BLOCK_SIZE * 1.1f, BLOCK_SIZE * 0.35f, "iron_block");
+        addTexturedCube(PUMP_CONSOLE_X, floorY + wallHeight * BLOCK_SIZE - BLOCK_SIZE * 0.6f, PUMP_CONSOLE_Z - BLOCK_SIZE * 0.3f,
+            BLOCK_SIZE * 4.6f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.25f, "hazard_stripe");
+
+        // Symmetric wall lockers frame the dais to keep the hero prop clear
+        addTexturedCube(PUMP_ANNEX_MIN_X + BLOCK_SIZE * 1.6f, floorY + BLOCK_SIZE * 1.8f, PUMP_CONSOLE_Z,
+            BLOCK_SIZE * 1.5f, BLOCK_SIZE * 2.8f, BLOCK_SIZE * 1.2f, "control_panel_gray");
+        addTexturedCube(PUMP_ANNEX_MAX_X - BLOCK_SIZE * 1.6f, floorY + BLOCK_SIZE * 1.8f, PUMP_CONSOLE_Z,
+            BLOCK_SIZE * 1.5f, BLOCK_SIZE * 2.8f, BLOCK_SIZE * 1.2f, "control_panel_gray");
+
+        // Lighting beacons highlight the center lane and the console wall
+        float annexLightY = floorY + wallHeight * BLOCK_SIZE - 20f;
+        createAlarmLight(annexCenterX, annexLightY, annexCenterZ);
+        createAlarmLight(PUMP_CONSOLE_X, annexLightY, PUMP_CONSOLE_Z + BLOCK_SIZE * 0.4f);
+
+        // Pump technician NPC
+        float kudX = annexCenterX - BLOCK_SIZE * 4.4f;
+        float kudZ = annexCenterZ - BLOCK_SIZE * 0.2f;
+        createNPCEngineer("Kudryavtsev",
+            kudX,
+            floorY,
+            kudZ,
+            10f,
+            "kudryavtsev_head", "kudryavtsev_body", "kudryavtsev_legs", "kudryavtsev_arms");
     }
     
     private int generateReactorFloorTexture() {
@@ -6873,58 +7826,122 @@ public class ChernobylGameCore {
     
     // NPC Engineer texture generators
     private int generateEngineerHeadTexture(int skinColor, boolean hasHair) {
-        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        int S = TEXTURE_SIZE;
+        int[] facePixels = new int[S * S];
         Random rand = new Random(skinColor + 1234);
-        
+
         int skinR = (skinColor >> 16) & 0xFF;
         int skinG = (skinColor >> 8) & 0xFF;
         int skinB = skinColor & 0xFF;
-        
-        // Fill with skin color
-        for (int y = 0; y < TEXTURE_SIZE; y++) {
-            for (int x = 0; x < TEXTURE_SIZE; x++) {
+        int hairColor = (255 << 24) | (50 << 16) | (40 << 8) | 30;
+
+        // === FRONT FACE (detailed features) ===
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
                 int r = skinR + rand.nextInt(10) - 5;
                 int g = skinG + rand.nextInt(10) - 5;
                 int b = skinB + rand.nextInt(10) - 5;
-                pixels[y * TEXTURE_SIZE + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+                facePixels[y * S + x] = (255 << 24) | (r << 16) | (g << 8) | b;
             }
         }
-        
+
         if (hasHair) {
-            int hairColor = (255 << 24) | (50 << 16) | (40 << 8) | 30;
             for (int y = 0; y < 4; y++) {
                 for (int x = 2; x < 14; x++) {
-                    if (rand.nextFloat() > 0.2f) pixels[y * TEXTURE_SIZE + x] = hairColor;
+                    if (rand.nextFloat() > 0.2f) facePixels[y * S + x] = hairColor;
                 }
             }
         }
-        
+
         int eyeColor = (255 << 24) | (60 << 16) | (100 << 8) | 180;
         int eyeWhite = (255 << 24) | (240 << 16) | (240 << 8) | 240;
-        pixels[6 * TEXTURE_SIZE + 4] = eyeWhite;
-        pixels[6 * TEXTURE_SIZE + 5] = eyeColor;
-        pixels[6 * TEXTURE_SIZE + 10] = eyeColor;
-        pixels[6 * TEXTURE_SIZE + 11] = eyeWhite;
-        
+        facePixels[6 * S + 4] = eyeWhite;
+        facePixels[6 * S + 5] = eyeColor;
+        facePixels[6 * S + 10] = eyeColor;
+        facePixels[6 * S + 11] = eyeWhite;
+
         int browColor = (255 << 24) | (60 << 16) | (50 << 8) | 40;
-        pixels[5 * TEXTURE_SIZE + 4] = browColor;
-        pixels[5 * TEXTURE_SIZE + 5] = browColor;
-        pixels[5 * TEXTURE_SIZE + 10] = browColor;
-        pixels[5 * TEXTURE_SIZE + 11] = browColor;
-        
+        facePixels[5 * S + 4] = browColor;
+        facePixels[5 * S + 5] = browColor;
+        facePixels[5 * S + 10] = browColor;
+        facePixels[5 * S + 11] = browColor;
+
         int noseColor = (255 << 24) | (Math.max(0, skinR - 20) << 16) | (Math.max(0, skinG - 20) << 8) | Math.max(0, skinB - 15);
-        pixels[8 * TEXTURE_SIZE + 7] = noseColor;
-        pixels[8 * TEXTURE_SIZE + 8] = noseColor;
-        
+        facePixels[8 * S + 7] = noseColor;
+        facePixels[8 * S + 8] = noseColor;
+
         int mouthColor = (255 << 24) | (Math.max(0, skinR - 40) << 16) | (Math.max(0, skinG - 40) << 8) | Math.max(0, skinB - 30);
-        for (int x = 6; x < 10; x++) pixels[10 * TEXTURE_SIZE + x] = mouthColor;
-        
+        for (int x = 6; x < 10; x++) facePixels[10 * S + x] = mouthColor;
+
         if (!hasHair && skinColor == 0xCC8844) {
             int mustacheColor = (255 << 24) | (100 << 16) | (70 << 8) | 40;
-            for (int x = 5; x < 11; x++) pixels[9 * TEXTURE_SIZE + x] = mustacheColor;
+            for (int x = 5; x < 11; x++) facePixels[9 * S + x] = mustacheColor;
         }
-        
-        return createTextureFromPixels(pixels);
+
+        // === BUILD 64x16 ATLAS (front/back/side/top) ===
+        int W = S * 4;
+        int H = S;
+        int[] atlas = new int[W * H];
+
+        // Front section
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                atlas[y * W + x] = facePixels[y * S + x];
+            }
+        }
+
+        Random backRand = new Random(skinColor + 4321);
+        Random sideRand = new Random(skinColor + 6789);
+        Random topRand = new Random(skinColor + 9876);
+
+        // Back section
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                boolean hairRow = hasHair && y < 4;
+                int r = skinR + backRand.nextInt(8) - 4;
+                int g = skinG + backRand.nextInt(8) - 4;
+                int b = skinB + backRand.nextInt(8) - 4;
+                int color = hairRow ? hairColor : (255 << 24) | (r << 16) | (g << 8) | b;
+                atlas[y * W + S + x] = color;
+            }
+        }
+
+        // Side section (with simple ear highlight)
+        int earColor = (255 << 24) | (Math.min(255, skinR + 10) << 16) | (Math.min(255, skinG + 5) << 8) | Math.max(0, skinB - 5);
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                boolean hairRow = hasHair && y < 4;
+                int r = skinR + sideRand.nextInt(8) - 4;
+                int g = skinG + sideRand.nextInt(8) - 4;
+                int b = skinB + sideRand.nextInt(8) - 4;
+                int color = hairRow ? hairColor : (255 << 24) | (r << 16) | (g << 8) | b;
+                boolean earZone = (y >= 6 && y <= 9) && (x == 1 || x == 14);
+                if (!hairRow && earZone) color = earColor;
+                atlas[y * W + 2 * S + x] = color;
+            }
+        }
+
+        // Top/bottom section (used for both in mesh)
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                int color;
+                if (hasHair) {
+                    int variation = topRand.nextInt(10) - 5;
+                    int hr = Math.max(0, Math.min(255, 50 + variation));
+                    int hg = Math.max(0, Math.min(255, 40 + variation));
+                    int hb = Math.max(0, Math.min(255, 30 + variation));
+                    color = (255 << 24) | (hr << 16) | (hg << 8) | hb;
+                } else {
+                    int r = skinR + topRand.nextInt(8) - 4;
+                    int g = skinG + topRand.nextInt(8) - 4;
+                    int b = skinB + topRand.nextInt(8) - 4;
+                    color = (255 << 24) | (r << 16) | (g << 8) | b;
+                }
+                atlas[y * W + 3 * S + x] = color;
+            }
+        }
+
+        return createTextureFromPixels(atlas, W, H);
     }
 
     // === PLAYER TEXTURE GENERATORS (distinct from NPCs) ===
@@ -6965,25 +7982,18 @@ public class ChernobylGameCore {
         int hatY  = rgba(220, 190, 40);
         int hatLt = rgba(240, 210, 60);
         int hatDk = rgba(185, 155, 20);
-        int hatBr = rgba(160, 135, 15); // brim
-        // Crown
+        int hatBr = rgba(160, 135, 15);
         for (int x = 2; x <= 13; x++) p[0 * S + x] = hatDk;
-        for (int x = 1; x <= 14; x++) p[1 * S + x] = (x == 7 || x == 8) ? hatLt : hatY;
-        for (int x = 0; x <= 15; x++) p[2 * S + x] = (x <= 1 || x >= 14) ? hatDk : (x == 6 || x == 9) ? hatLt : hatY;
-        // Brim (wider)
-        for (int x = 0; x <= 15; x++) p[3 * S + x] = hatBr;
+        for (int x = 1; x <= 14; x++) p[1 * S + x] = hatY;
+        for (int x = 0; x < S; x++) p[2 * S + x] = (x % 3 == 0) ? hatLt : hatY;
+        for (int x = 0; x < S; x++) p[3 * S + x] = hatBr;
 
-        // === BLACK HAIR: peeking under hat, rows 4 sides ===
+        // Black hair fringe below the brim
         int hairDk = rgba(30, 28, 25);
         int hairMd = rgba(45, 42, 38);
-        p[4 * S + 0] = hairDk; p[4 * S + 1] = hairMd;
-        p[4 * S + 14] = hairMd; p[4 * S + 15] = hairDk;
-        p[5 * S + 0] = hairMd; p[5 * S + 15] = hairMd;
-
-        // Forehead
-        for (int x = 2; x <= 13; x++) p[4 * S + x] = skinLt;
-
-        // === EYEBROWS: row 5, dark and thick ===
+        for (int x = 2; x <= 13; x++) {
+            p[4 * S + x] = (x % 2 == 0) ? hairDk : hairMd;
+        }
         int brow = rgba(30, 28, 25);
         for (int x = 4; x <= 6; x++) p[5 * S + x] = brow;
         for (int x = 9; x <= 11; x++) p[5 * S + x] = brow;
@@ -7317,7 +8327,8 @@ public class ChernobylGameCore {
         return createTextureFromPixels(atlas, W, H);
     }
 
-    private int generateDyatlovHeadAtlas() {
+    private int generateDyatlovHeadAtlas() 
+    {
         int W = 64, H = 16, S = 16;
         int[] atlas = new int[W * H];
         int[] front = generateDyatlovHeadFrontPixels();
@@ -7959,6 +8970,103 @@ public class ChernobylGameCore {
         return createTextureFromPixels(pixels);
     }
 
+    // Parametric coat/jacket texture for generic engineers
+    private int generateEngineerBodyTexture(int coatColor) {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        int S = TEXTURE_SIZE;
+
+        int baseR = (coatColor >> 16) & 0xFF;
+        int baseG = (coatColor >> 8) & 0xFF;
+        int baseB = coatColor & 0xFF;
+        Random rand = new Random(coatColor * 97L + 1337);
+
+        // Base fabric fill with subtle noise
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                int r = Math.max(0, Math.min(255, baseR + rand.nextInt(9) - 4));
+                int g = Math.max(0, Math.min(255, baseG + rand.nextInt(9) - 4));
+                int b = Math.max(0, Math.min(255, baseB + rand.nextInt(9) - 4));
+                pixels[y * S + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+
+        int edgeShade = rgba(baseR - 35, baseG - 35, baseB - 35);
+        int deeperShade = rgba(baseR - 55, baseG - 55, baseB - 55);
+        int highlight = rgba(baseR + 25, baseG + 25, baseB + 25);
+        int collarHighlight = rgba(baseR + 40, baseG + 40, baseB + 40);
+
+        // Vertical edge shading to give depth
+        for (int y = 0; y < S; y++) {
+            pixels[y * S + 0] = deeperShade;
+            pixels[y * S + 1] = edgeShade;
+            pixels[y * S + 14] = edgeShade;
+            pixels[y * S + 15] = deeperShade;
+        }
+
+        // Soft collar rows at top
+        for (int x = 0; x < S; x++) {
+            pixels[0 * S + x] = collarHighlight;
+            pixels[1 * S + x] = highlight;
+        }
+
+        // Neck opening shadow in the middle
+        for (int x = 6; x <= 9; x++) {
+            pixels[0 * S + x] = deeperShade;
+            pixels[1 * S + x] = edgeShade;
+        }
+
+        // Center seam + buttons
+        int seamColor = rgba(baseR - 25, baseG - 25, baseB - 25);
+        int buttonColor = rgba(220, 220, 220);
+        for (int y = 2; y < S; y++) {
+            pixels[y * S + 7] = seamColor;
+            pixels[y * S + 8] = seamColor;
+        }
+        int[] buttonRows = {3, 6, 9, 12};
+        for (int row : buttonRows) {
+            pixels[row * S + 7] = buttonColor;
+            pixels[row * S + 8] = buttonColor;
+        }
+
+        // Upper chest pockets (outlined rectangles)
+        int pocketOutline = rgba(baseR - 15, baseG - 15, baseB - 15);
+        int pocketFill = rgba(baseR + 10, baseG + 10, baseB + 10);
+        for (int x = 2; x <= 5; x++) {
+            pixels[3 * S + x] = pocketOutline;
+            pixels[6 * S + x] = pocketOutline;
+            pixels[3 * S + x + 7] = pocketOutline;
+            pixels[6 * S + x + 7] = pocketOutline;
+        }
+        for (int y = 4; y <= 5; y++) {
+            for (int x = 3; x <= 4; x++) {
+                pixels[y * S + x] = pocketFill;
+                pixels[y * S + x + 7] = pocketFill;
+            }
+        }
+
+        // Utility belt / waist seam near lower third
+        int beltColor = rgba(baseR - 45, baseG - 45, baseB - 45);
+        for (int x = 0; x < S; x++) {
+            pixels[11 * S + x] = beltColor;
+            pixels[12 * S + x] = beltColor;
+        }
+
+        // Lower pockets below the belt
+        for (int x = 2; x <= 6; x++) {
+            pixels[13 * S + x] = pocketOutline;
+            pixels[14 * S + x] = pocketOutline;
+            pixels[13 * S + x + 7] = pocketOutline;
+            pixels[14 * S + x + 7] = pocketOutline;
+        }
+
+        // Bottom hem shadow
+        for (int x = 0; x < S; x++) {
+            pixels[15 * S + x] = deeperShade;
+        }
+
+        return createTextureFromPixels(pixels);
+    }
+
     private int generateAkimovArmsTexture() {
         int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
         int S = TEXTURE_SIZE;
@@ -8010,72 +9118,73 @@ public class ChernobylGameCore {
     private int generateAkimovLegsTexture() {
         int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
         int S = TEXTURE_SIZE;
+        Random rand = new Random(19860426L);
 
-        // === WHITE/LIGHT GRAY PANTS: rows 0-10 ===
-        int pantsW  = rgba(235, 235, 235);  // main white
-        int pantsLt = rgba(245, 245, 245);  // highlight
-        int pantsDk = rgba(218, 218, 218);  // shadow/crease
-        int pantsSh = rgba(200, 200, 200);  // deep shadow edge
+        int baseR = 32;
+        int baseG = 52;
+        int baseB = 92;
 
-        for (int y = 0; y < 11; y++)
+        // Fill trouser fabric with slight vertical gradient + noise
+        for (int y = 0; y < S; y++) {
+            float t = y / (float) (S - 1);
+            int shadeR = baseR + (int) (t * 10);
+            int shadeG = baseG + (int) (t * 8);
+            int shadeB = baseB + (int) (t * 6);
             for (int x = 0; x < S; x++) {
-                if (x == 0 || x == 15) pixels[y * S + x] = pantsSh;  // edge shadow
-                else if (x == 1 || x == 14) pixels[y * S + x] = pantsDk;
-                else if ((x + y * 2) % 5 == 0) pixels[y * S + x] = pantsLt;  // fabric highlight
-                else pixels[y * S + x] = pantsW;
+                int noise = rand.nextInt(7) - 3;
+                int r = Math.max(0, Math.min(255, shadeR + noise));
+                int g = Math.max(0, Math.min(255, shadeG + noise));
+                int b = Math.max(0, Math.min(255, shadeB + noise));
+                pixels[y * S + x] = (255 << 24) | (r << 16) | (g << 8) | b;
             }
-        // Center crease (pant leg seam)
-        for (int y = 0; y < 11; y++) pixels[y * S + 8] = pantsDk;
-        // Waistband (slightly darker)
-        for (int x = 0; x < S; x++) pixels[0 * S + x] = pantsDk;
+        }
 
-        // Knee crease
-        for (int x = 3; x <= 12; x++) pixels[6 * S + x] = pantsDk;
+        int edgeShadow = rgba(12, 20, 40);
+        int innerShadow = rgba(20, 28, 55);
+        for (int y = 0; y < S; y++) {
+            pixels[y * S + 0] = edgeShadow;
+            pixels[y * S + 1] = innerShadow;
+            pixels[y * S + 14] = innerShadow;
+            pixels[y * S + 15] = edgeShadow;
+        }
 
-        // === GRAY CUFF/ANKLE BAND: rows 11-12 ===
-        int cuffDk = rgba(170, 170, 175);
-        int cuffLt = rgba(190, 190, 195);
+        // Crease highlight running down the center of each leg
+        int creaseHighlight = rgba(70, 90, 140);
+        int creaseShadow = rgba(24, 34, 64);
+        for (int y = 0; y < S; y++) {
+            pixels[y * S + 6] = creaseShadow;
+            pixels[y * S + 7] = creaseHighlight;
+            pixels[y * S + 8] = creaseHighlight;
+            pixels[y * S + 9] = creaseShadow;
+        }
+
+        // Belt band at top
+        int belt = rgba(25, 18, 18);
+        int beltHighlight = rgba(65, 55, 40);
         for (int x = 0; x < S; x++) {
-            pixels[11 * S + x] = cuffLt;
-            pixels[12 * S + x] = cuffDk;
+            pixels[0 * S + x] = belt;
+            pixels[1 * S + x] = belt;
+        }
+        pixels[1 * S + 3] = beltHighlight;
+        pixels[1 * S + 12] = beltHighlight;
+
+        // Knee reinforcement patch
+        int kneeHighlight = rgba(80, 100, 150);
+        int kneeShadow = rgba(25, 35, 70);
+        for (int x = 3; x <= 12; x++) {
+            pixels[8 * S + x] = kneeShadow;
+            pixels[9 * S + x] = kneeHighlight;
+            pixels[10 * S + x] = kneeHighlight;
+            pixels[11 * S + x] = kneeShadow;
         }
 
-        // === BLACK SHOES: rows 13-15 ===
-        int shoeBlk = rgba(25, 25, 28);
-        int shoeDk  = rgba(40, 40, 45);    // shoe highlight
-        int shoeH   = rgba(60, 60, 65);    // top edge highlight
-
-        // Shoe top edge
-        for (int x = 0; x < S; x++) pixels[13 * S + x] = shoeH;
-        // Shoe body
-        for (int y = 14; y < S; y++)
-            for (int x = 0; x < S; x++)
-                pixels[y * S + x] = shoeBlk;
-        // Shoe sole highlight
-        for (int x = 1; x <= 14; x++) pixels[15 * S + x] = shoeDk;
-        // Toe cap detail
-        pixels[14 * S + 2] = shoeDk; pixels[14 * S + 3] = shoeDk;
-        pixels[14 * S + 12] = shoeDk; pixels[14 * S + 13] = shoeDk;
-
-        return createTextureFromPixels(pixels);
-    }
-
-    // Generic body texture for Toptunov (original style)
-    private int generateEngineerBodyTexture(int coatColor) {
-        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
-        Random rand = new Random(coatColor + 7777);
-        int baseR = (coatColor >> 16) & 0xFF;
-        int baseG = (coatColor >> 8) & 0xFF;
-        int baseB = coatColor & 0xFF;
-        for (int y = 0; y < TEXTURE_SIZE; y++) {
-            for (int x = 0; x < TEXTURE_SIZE; x++) {
-                int r = Math.max(0, Math.min(255, baseR + rand.nextInt(10) - 5));
-                int g = Math.max(0, Math.min(255, baseG + rand.nextInt(10) - 5));
-                int b = Math.max(0, Math.min(255, baseB + rand.nextInt(10) - 5));
-                if (x == TEXTURE_SIZE / 2) { r -= 20; g -= 20; b -= 20; }
-                pixels[y * TEXTURE_SIZE + x] = (255 << 24) | (Math.max(0,r) << 16) | (Math.max(0,g) << 8) | Math.max(0,b);
-            }
+        // Cuff shadow near bottom
+        int cuff = rgba(18, 25, 45);
+        for (int x = 0; x < S; x++) {
+            pixels[14 * S + x] = cuff;
+            pixels[15 * S + x] = edgeShadow;
         }
+
         return createTextureFromPixels(pixels);
     }
 
@@ -8309,6 +9418,21 @@ public class ChernobylGameCore {
         gameObjects.add(obj);
     }
 
+    private void createAlarmLight(float x, float y, float z) {
+        GameObject base = new GameObject(cylinderMesh,
+            new Vector3f(x, y - 25f, z),
+            new Vector3f(24f, 20f, 24f),
+            new Vector3f(0.2f, 0.2f, 0.2f));
+        gameObjects.add(base);
+
+        GameObject glass = new GameObject(cylinderMesh,
+            new Vector3f(x, y + 10f, z),
+            new Vector3f(20f, 40f, 20f),
+            new Vector3f(0.8f, 0.15f, 0.15f));
+        gameObjects.add(glass);
+        alarmLights.add(new AlarmLight(glass));
+    }
+
     public void update(long window, float deltaTime) {
         // Handle game state
         if (gameState == STATE_MENU) {
@@ -8395,6 +9519,23 @@ public class ChernobylGameCore {
             geigerClickCount = 0;
         }
         if (radiationFlashTimer > 0f) radiationFlashTimer -= deltaTime;
+
+        // Dynamic lighting/alarm blending
+        lightingTimer += deltaTime;
+        float targetAlarmLevel = 0f;
+        if (storyPhase >= 5) targetAlarmLevel = 0.35f;
+        if (reactorStability < 70f) {
+            targetAlarmLevel = Math.max(targetAlarmLevel, (70f - reactorStability) / 40f);
+        }
+        if (storyPhase >= 8) targetAlarmLevel = 1f;
+        if (storyPhase >= 9) targetAlarmLevel = 1.25f;
+        float blendSpeed = 2.5f;
+        alarmActivation += (targetAlarmLevel - alarmActivation) * Math.min(1f, deltaTime * blendSpeed);
+        alarmPulseTimer += deltaTime * (1.5f + Math.max(0.2f, alarmActivation));
+        float alarmPulse = 0.5f + 0.5f * (float)Math.sin(alarmPulseTimer * 4.2f);
+        for (AlarmLight beacon : alarmLights) {
+            beacon.updateGlow(Math.max(0f, alarmActivation), alarmPulse);
+        }
 
         // ESC key: only used to close panels/machine UI (handled in updateMachineInteraction)
         // Reset menuEscHeld when ESC is released so machine UI close works properly
@@ -8586,9 +9727,10 @@ public class ChernobylGameCore {
             isOnGround = false;
         }
         
-        // Apply gravity
-        velocityY -= GRAVITY * deltaTime;
-        float newY = cameraPos.y + velocityY * deltaTime;
+        // Apply gravity (cap deltaTime to prevent floating on lag spikes)
+        float gravDt = Math.min(deltaTime, 0.05f); // Cap at 50ms (20fps minimum)
+        velocityY -= GRAVITY * gravDt;
+        float newY = cameraPos.y + velocityY * gravDt;
         
         // Check if landing on table
         float tableZPos = 4 * BLOCK_SIZE;
@@ -8632,19 +9774,28 @@ public class ChernobylGameCore {
         boolean onStairs = (pz < -34 * BLOCK_SIZE && pz >= -42 * BLOCK_SIZE
                            && px > -3 * BLOCK_SIZE && px < 3 * BLOCK_SIZE);
         // Zone: BOTTOM LEVEL (landing, left arm, walkway, or reactor hall at y=-180)
+        // NOTE: Do NOT use cameraPos.y in zone checks — it changes during jumps
+        // and would cause the ground level to flip mid-air, teleporting the player.
         boolean atBottomLevel = false;
         if (pz < -42 * BLOCK_SIZE && pz >= -46 * BLOCK_SIZE) {
-            // Landing + left arm: z=-42 to -46
+            // Landing + both arms: z=-42 to -46
             atBottomLevel = true;
-        } else if (px <= -18 * BLOCK_SIZE && px >= -21 * BLOCK_SIZE
-                   && pz >= -42 * BLOCK_SIZE && pz <= -12 * BLOCK_SIZE
-                   && cameraPos.y < GROUND_LEVEL - 50f) {
-            // Walkway: x=-18 to -20, z=-42 to -12
+        } else if (px <= -17 * BLOCK_SIZE && px >= -21 * BLOCK_SIZE
+                   && pz >= -42 * BLOCK_SIZE && pz <= -12 * BLOCK_SIZE) {
+            // Reactor walkway: x=-17 to -21, z=-42 to -12
+            atBottomLevel = true;
+        } else if (px >= PUMP_WALKWAY_INNER_WALL && px <= PUMP_WALKWAY_OUTER_WALL
+                && pz >= -42 * BLOCK_SIZE && pz <= -12 * BLOCK_SIZE) {
+            // Pump walkway mirrors the reactor walkway deck height
+            atBottomLevel = true;
+        } else if (px >= PUMP_ANNEX_MIN_X && px <= PUMP_ANNEX_MAX_X
+                && pz >= PUMP_ANNEX_MIN_Z && pz <= PUMP_ANNEX_MAX_Z) {
+            // Pump annex shares reactor hall deck height
             atBottomLevel = true;
         }
-        // Zone: REACTOR HALL (x < -17*BS, y already low, within hall Z range)
+        // Zone: REACTOR HALL (x < -17*BS, within hall Z range)
         boolean inReactorHall = (px <= -17 * BLOCK_SIZE && pz >= -12 * BLOCK_SIZE && pz <= 12 * BLOCK_SIZE
-                                && cameraPos.y < GROUND_LEVEL - 50f);
+                                && !onStairs);
         
         if (onStairs) {
             // Stairs: z=-34 → y=0, z=-42 → y=-180
@@ -8773,25 +9924,60 @@ public class ChernobylGameCore {
         float PR = PLAYER_RADIUS;
         float BS = BLOCK_SIZE;
 
-        // Zone detection — check specific lower-level zones FIRST to prevent
-        // broad zones (like straight corridor) from catching walkway/reactor hall positions
-        boolean inWalkway = (x <= -18 * BS && x >= -21 * BS 
-            && z >= -42 * BS && z <= -12 * BS && y < -50f);
-        boolean inReactorHall = (x <= -17 * BS && z >= -12 * BS && z <= 12 * BS && y < -50f);
+        // Zone detection — check specific lower-level zones FIRST
+        boolean inPumpAnnex = (x <= PUMP_ANNEX_MAX_X + BS && x >= PUMP_ANNEX_MIN_X - BS
+            && z >= PUMP_ANNEX_MIN_Z - BS && z <= PUMP_ANNEX_MAX_Z + BS);
+        boolean inWalkway = (!inPumpAnnex && x <= -17 * BS && x >= -21 * BS 
+            && z >= -46 * BS && z <= -12 * BS);
+        boolean inPumpWalkway = (!inPumpAnnex && x >= PUMP_WALKWAY_INNER_WALL && x <= PUMP_WALKWAY_OUTER_WALL
+            && z >= -46 * BS && z <= -12 * BS);
+        boolean inPumpRightArm = (!inPumpAnnex && !inPumpWalkway && z < -42 * BS && z >= -46 * BS
+            && x >= (CORRIDOR_HALF_WIDTH + BS) && x < PUMP_WALKWAY_INNER_WALL);
+        boolean inReactorHall = (x <= -17 * BS && z >= -12 * BS && z <= 12 * BS
+            && !inWalkway && !inPumpWalkway && !inPumpAnnex);
         boolean inControlRoom = (z >= CORRIDOR_START_Z && !inReactorHall);
-        boolean inBottomLanding = (!inWalkway && z < -42 * BS && z >= -46 * BS);
-        boolean inStairs = (!inWalkway && z < -34 * BS && z >= -42 * BS 
+        boolean inBottomLanding = (!inWalkway && !inPumpWalkway && !inPumpAnnex && z < -42 * BS && z >= -46 * BS
+            && x >= -18 * BS && x <= 3 * BS);
+        boolean inStairs = (!inWalkway && !inPumpWalkway && !inPumpAnnex && z < -34 * BS && z >= -42 * BS 
             && x >= -(CORRIDOR_HALF_WIDTH + 2 * BS) && x <= (CORRIDOR_HALF_WIDTH + 2 * BS));
-        boolean inStraightCorridor = (!inWalkway && !inReactorHall 
+        boolean inStraightCorridor = (!inWalkway && !inPumpWalkway && !inReactorHall && !inPumpAnnex
             && z < CORRIDOR_START_Z && z >= -34 * BS
             && x >= -(CORRIDOR_HALF_WIDTH + 2 * BS) && x <= (CORRIDOR_HALF_WIDTH + 2 * BS));
 
-        // Check walkway and reactor hall FIRST (they need priority over corridor zones)
-        if (inWalkway) {
-            // ============= WALKWAY (x=-18 to -21, z=-42 to -12) =============
-            if (x - PR < -21 * BS) return true;  // Left wall
-            // Right side open (railing only, no collision)
-            // Allow exit to reactor hall when z > -12*BS
+        if (inPumpAnnex) {
+            // Pump annex bounds mirrored to the reactor hall
+            if (x - PR < PUMP_ANNEX_MIN_X) return true;
+            if (x + PR > PUMP_ANNEX_MAX_X) return true;
+            if (z + PR > PUMP_ANNEX_MAX_Z) return true;
+
+            float walkwayDoorMinX = PUMP_WALKWAY_X_MIN - BLOCK_SIZE; // Matches rendered doorway width
+            float walkwayDoorMaxX = PUMP_WALKWAY_X_MAX + BLOCK_SIZE;
+            if (z - PR < PUMP_ANNEX_MIN_Z) {
+                boolean inDoorway = (x + PR > walkwayDoorMinX && x - PR < walkwayDoorMaxX);
+                if (!inDoorway) return true;
+            }
+
+        } else if (inWalkway) {
+            // ============= WALKWAY (x=-17 to -21, z=-46 to -12) =============
+            if (x - PR < -21 * BS) return true;  // Outer railing always solid
+            if (z - PR < -46 * BS) return true;  // Far wall
+            // Right wall only exists from z=-42 to z=-12 (the long stretch)
+            // At z=-42 to z=-46, the right side is OPEN (connects to the landing/left arm)
+            if (z >= -42 * BS && x + PR > -17 * BS) return true;
+            // z > -12*BS: open to reactor hall (no near wall)
+
+        } else if (inPumpWalkway) {
+            // ============= PUMP WALKWAY (x=17 to 21, z=-46 to -12) =============
+            if (x + PR > PUMP_WALKWAY_OUTER_WALL) {
+                if (z < -12 * BS) return true;
+            }
+            if (z - PR < -46 * BS) return true;
+            if (z >= -42 * BS && x - PR < PUMP_WALKWAY_INNER_WALL - 0.2f * BS) return true;
+
+        } else if (inPumpRightArm) {
+            // ============= RIGHT ARM PRIOR TO PUMP WALKWAY =============
+            if (z - PR < -46 * BS) return true;
+            if (z + PR > -42 * BS) return true;
 
         } else if (inReactorHall) {
             // ============= EXISTING REACTOR HALL =============
@@ -8802,7 +9988,7 @@ public class ChernobylGameCore {
             if (x + PR > hallX) return true; // Window-side boundary
             if (x - PR < hallFarX + BS) return true; // Far wall
             if (z + PR > hallDepth * BS - BS) return true; // Side wall +Z
-            // Side wall -Z: allow passage if near walkway doorway (x from -18 to -21)
+            // Side wall -Z: allow passage through walkway doorway (x from -18 to -21)
             if (z - PR < -hallDepth * BS + BS) {
                 if (x > -17 * BS || x < -21 * BS) return true;
             }
@@ -8826,26 +10012,49 @@ public class ChernobylGameCore {
         } else if (inStraightCorridor) {
             // ============= STRAIGHT CORRIDOR (z from -12 to -34, flat) =============
             if (x - PR < -CORRIDOR_HALF_WIDTH - BS) return true;  // Left wall
-            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;   // Right wall
+            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;   // Right wall stays sealed
 
         } else if (inStairs) {
             // ============= STAIRS (z from -34 to -42, descending) =============
             if (x - PR < -CORRIDOR_HALF_WIDTH - BS) return true;  // Left wall
             if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;   // Right wall
 
+
         } else if (inBottomLanding) {
             // ============= BOTTOM LANDING + LEFT ARM (z from -42 to -46) =============
-            // Right wall (x = +3*BS)
-            if (x + PR > CORRIDOR_HALF_WIDTH + BS) return true;
+            // Right wall at x = +3*BS unless stepping into the mirrored hallway
+            float rightWallX = CORRIDOR_HALF_WIDTH + BS;
+            if (x + PR > rightWallX) {
+                boolean enteringRightHallway = (x <= PUMP_WALKWAY_INNER_WALL + PR);
+                if (!enteringRightHallway) return true;
+            }
             // Far wall at z = -46
             if (z - PR < -46 * BS) return true;
-            // Left boundary: open to walkway at x <= -18*BS
-            // Near wall (z = -42 side) only for x outside the corridor opening
-            if (z + PR > -42 * BS && x < -CORRIDOR_HALF_WIDTH) return true;
+            // Left side is open to walkway zone
+            // z=-42 side: wall except at the stair opening (x from -2 to +2)
+            if (z + PR > -42 * BS) {
+                boolean inStairOpening = (x >= -CORRIDOR_HALF_WIDTH - PR && x <= CORRIDOR_HALF_WIDTH + PR);
+                boolean enteringLeftArm = (x <= (-17 * BS) + PR);
+                boolean enteringRightArm = (x >= (CORRIDOR_HALF_WIDTH + BS) - PR && x <= PUMP_WALKWAY_INNER_WALL + PR);
+                if (!inStairOpening && !enteringLeftArm && !enteringRightArm) return true;
+            }
 
         } else {
             // Outside all known zones - solid wall
             return true;
+        }
+
+        // === NPC COLLISION (floor-aware so only nearby NPCs block) ===
+        for (NPCEngineer npc : npcEngineers) {
+            float npcEyeLevel = npc.basePosition.y + GROUND_LEVEL;
+            if (Math.abs(y - npcEyeLevel) > 80f) continue;
+            float npcRadius = 40f;
+            float dx = x - npc.basePosition.x;
+            float dz = z - npc.basePosition.z;
+            float combinedRadius = npcRadius + PR;
+            if (dx * dx + dz * dz < combinedRadius * combinedRadius) {
+                return true;
+            }
         }
 
         // === CONTROL ROOM FURNITURE COLLISION ===
@@ -8914,6 +10123,84 @@ public class ChernobylGameCore {
             }
         }
 
+        // === PUMP ANNEX EQUIPMENT COLLISION ===
+        if (inPumpAnnex) {
+            float annexCenterX = (PUMP_ANNEX_MIN_X + PUMP_ANNEX_MAX_X) * 0.5f;
+            float annexCenterZ = (PUMP_ANNEX_MIN_Z + PUMP_ANNEX_MAX_Z) * 0.5f;
+
+            // Pump pods on both sides of the trench
+            float[] podRows = { annexCenterZ - 3.2f * BS, annexCenterZ + 3.2f * BS };
+            float pumpHalfX = 0.95f * BS + PR;
+            float pumpHalfZ = 1.35f * BS + PR;
+            for (float podZ : podRows) {
+                for (int side = -1; side <= 1; side += 2) {
+                    float podX = annexCenterX + side * 3.6f * BS;
+                    if (Math.abs(x - podX) < pumpHalfX && Math.abs(z - podZ) < pumpHalfZ) return true;
+                }
+            }
+
+            // Sensor pylons / mast assemblies
+            float mastHalf = 0.45f * BS + PR;
+            for (float podZ : podRows) {
+                for (int side = -1; side <= 1; side += 2) {
+                    float podX = annexCenterX + side * 3.6f * BS;
+                    float mastX = podX - side * 0.95f * BS;
+                    float mastZ = podZ - 1.1f * BS;
+                    if (Math.abs(x - mastX) < mastHalf && Math.abs(z - mastZ) < mastHalf) return true;
+                }
+            }
+
+            // Entry staging pads, hose cradle, and bollards
+            float entryZ = PUMP_ANNEX_MIN_Z + 2.4f * BS;
+            float entryPadHalfX = 0.85f * BS + PR;
+            float entryPadHalfZ = 0.7f * BS + PR;
+            if (Math.abs(z - entryZ) < entryPadHalfZ) {
+                if (Math.abs(x - (annexCenterX - 2.8f * BS)) < entryPadHalfX) return true;
+                if (Math.abs(x - (annexCenterX + 2.8f * BS)) < entryPadHalfX) return true;
+            }
+            float hoseZ = entryZ + 1.2f * BS;
+            float hoseHalfX = 0.6f * BS + PR;
+            float hoseHalfZ = 0.45f * BS + PR;
+            if (Math.abs(x - annexCenterX) < hoseHalfX && Math.abs(z - hoseZ) < hoseHalfZ) return true;
+            // Tool crib and crates near the rear wall
+            float backZ = PUMP_ANNEX_MAX_Z - 2f * BS;
+            float cribHalfX = 0.7f * BS + PR;
+            float cribHalfZ = 0.6f * BS + PR;
+            if (Math.abs(x - (annexCenterX - 3.4f * BS)) < cribHalfX && Math.abs(z - backZ) < cribHalfZ) return true;
+            float crateHalfX = 0.6f * BS + PR;
+            float crateHalfZ = 0.9f * BS + PR;
+            if (Math.abs(x - (annexCenterX + 3.4f * BS)) < crateHalfX && Math.abs(z - backZ) < crateHalfZ) return true;
+
+            // Console cluster on the front wall
+            float consoleCoreZ = PUMP_CONSOLE_Z + 0.6f * BS;
+            float consoleCoreHalfX = 1.8f * BS + PR;
+            float consoleCoreHalfZ = 0.6f * BS + PR;
+            if (Math.abs(x - PUMP_CONSOLE_X) < consoleCoreHalfX && Math.abs(z - consoleCoreZ) < consoleCoreHalfZ) return true;
+            float tabletOffsetX = 2.05f * BS;
+            float tabletHalfX = 0.45f * BS + PR;
+            float tabletHalfZ = 0.45f * BS + PR;
+            if (Math.abs(x - (PUMP_CONSOLE_X - tabletOffsetX)) < tabletHalfX
+                    && Math.abs(z - (PUMP_CONSOLE_Z + 0.5f * BS)) < tabletHalfZ) return true;
+            if (Math.abs(x - (PUMP_CONSOLE_X + tabletOffsetX)) < tabletHalfX
+                    && Math.abs(z - (PUMP_CONSOLE_Z + 0.5f * BS)) < tabletHalfZ) return true;
+            float apronZ = PUMP_CONSOLE_Z - 0.75f * BS;
+            float apronHalfX = 1.9f * BS + PR;
+            float apronHalfZ = 0.45f * BS + PR;
+            if (Math.abs(x - PUMP_CONSOLE_X) < apronHalfX && Math.abs(z - apronZ) < apronHalfZ) return true;
+            float frontRailZ = PUMP_CONSOLE_Z - 1.05f * BS;
+            float frontRailHalfX = 2.0f * BS + PR;
+            float frontRailHalfZ = 0.25f * BS + PR;
+            if (Math.abs(x - PUMP_CONSOLE_X) < frontRailHalfX && Math.abs(z - frontRailZ) < frontRailHalfZ) return true;
+
+            // Wall lockers flanking the dais
+            float lockerHalfX = 0.75f * BS + PR;
+            float lockerHalfZ = 0.6f * BS + PR;
+            if (Math.abs(z - PUMP_CONSOLE_Z) < lockerHalfZ) {
+                if (Math.abs(x - (PUMP_ANNEX_MIN_X + 1.6f * BS)) < lockerHalfX) return true;
+                if (Math.abs(x - (PUMP_ANNEX_MAX_X - 1.6f * BS)) < lockerHalfX) return true;
+            }
+        }
+
         return false;
     }
 
@@ -8950,8 +10237,19 @@ public class ChernobylGameCore {
         // Set lighting uniforms
         glUniform3f(lightPosLoc, 0, 300, 0);  // Main light above
         glUniform3f(viewPosLoc, cameraPos.x, cameraPos.y, cameraPos.z);
-        glUniform3f(lightColorLoc, 1.0f, 0.75f, 0.45f);
-        glUniform1f(ambientLoc, 0.5f); // Warm amber lighting
+        float alarmBlend = Math.min(1f, Math.max(0f, alarmActivation));
+        float pulseBoost = 0.08f * (float)Math.sin(alarmPulseTimer * 2.2f);
+        float flicker = 0.05f * (float)Math.sin(lightingTimer * 5f + alarmBlend * 3f);
+        float lightR = 1.0f;
+        float lightG = 0.75f * (1f - alarmBlend) + 0.2f * alarmBlend;
+        float lightB = 0.45f * (1f - alarmBlend) + 0.2f * alarmBlend;
+        glUniform3f(lightColorLoc,
+            lightR,
+            Math.max(0f, lightG + pulseBoost * alarmBlend),
+            Math.max(0f, lightB + pulseBoost * alarmBlend * 0.5f));
+        float ambientBase = 0.45f * (1f - alarmBlend) + 0.78f * alarmBlend;
+        float ambient = Math.max(0.25f, Math.min(0.95f, ambientBase + flicker));
+        glUniform1f(ambientLoc, ambient);
         
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer fb = stack.mallocFloat(16);
@@ -9073,6 +10371,7 @@ public class ChernobylGameCore {
 
                 // Compute relative offsets from the original home position
                 float homeX = npc.homePosition.x;
+                float homeY = npc.homePosition.y;
                 float homeZ = npc.homePosition.z;
 
                 float npcSwing = npc.isWalking ? (float) Math.sin(npc.walkPhase) * 0.6f : 0f;
@@ -9081,17 +10380,20 @@ public class ChernobylGameCore {
 
                 // Relative X/Z offsets for each part (subtract homePosition to get local coords)
                 float headRelX = npc.head.position.x - homeX;
+                float headRelY = npc.head.position.y - homeY;
                 float headRelZ = npc.head.position.z - homeZ;
                 float bodyRelX = npc.body.position.x - homeX;
+                float bodyRelY = npc.body.position.y - homeY;
                 float bodyRelZ = npc.body.position.z - homeZ;
                 float llRelX = npc.leftLeg.position.x - homeX;
                 float rlRelX = npc.rightLeg.position.x - homeX;
                 float laRelX = npc.leftArm.position.x - homeX;
                 float raRelX = npc.rightArm.position.x - homeX;
+                float labelRelY = (npc.nameLabel != null) ? npc.nameLabel.position.y - homeY : 150f;
 
                 // --- NPC Head (static, no swing) ---
                 model.identity()
-                    .translate(npcBaseX, npcBaseY + npc.head.position.y, npcBaseZ)
+                    .translate(npcBaseX, npcBaseY + headRelY, npcBaseZ)
                     .rotateY(npcRot)
                     .translate(headRelX, 0, headRelZ)
                     .scale(npc.head.scale);
@@ -9101,7 +10403,7 @@ public class ChernobylGameCore {
 
                 // --- NPC Body (static) ---
                 model.identity()
-                    .translate(npcBaseX, npcBaseY + npc.body.position.y, npcBaseZ)
+                    .translate(npcBaseX, npcBaseY + bodyRelY, npcBaseZ)
                     .rotateY(npcRot)
                     .translate(bodyRelX, 0, bodyRelZ)
                     .scale(npc.body.scale);
@@ -9159,7 +10461,7 @@ public class ChernobylGameCore {
 
                 // --- NPC Name Label (billboard - always faces camera) ---
                 if (npc.nameLabel != null) {
-                    float labelY = npcBaseY + 150f;
+                    float labelY = npcBaseY + labelRelY;
                     float dx = cameraPos.x - npcBaseX;
                     float dz = cameraPos.z - npcBaseZ;
                     float labelRot = (float) Math.atan2(dx, dz);
@@ -9234,6 +10536,10 @@ public class ChernobylGameCore {
         }
         
         glDeleteProgram(shaderProgram);
+        if (hudShaderProgram != 0) {
+            glDeleteProgram(hudShaderProgram);
+            hudShaderProgram = 0;
+        }
     }
     
     // Inner classes for Mesh and GameObject
@@ -9309,6 +10615,23 @@ public class ChernobylGameCore {
             this.position = position;
             this.scale = scale;
             this.color = color;
+        }
+    }
+
+    static class AlarmLight {
+        GameObject glassDome;
+
+        AlarmLight(GameObject glassDome) {
+            this.glassDome = glassDome;
+        }
+
+        void updateGlow(float activation, float pulse) {
+            if (glassDome == null) return;
+            float glow = activation * (0.35f + 0.65f * pulse);
+            float r = Math.min(1f, 0.65f + glow * 0.35f);
+            float g = 0.08f + glow * 0.18f;
+            float b = 0.08f + glow * 0.12f;
+            glassDome.color.set(r, g, b);
         }
     }
     
