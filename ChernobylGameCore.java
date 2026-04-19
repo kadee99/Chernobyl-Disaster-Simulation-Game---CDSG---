@@ -2,6 +2,7 @@
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.lwjgl.BufferUtils;
+import org.lwjgl.glfw.GLFWGamepadState;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.openal.*;
 import org.lwjgl.stb.STBVorbisInfo;
@@ -372,6 +373,7 @@ public class ChernobylGameCore {
     private static final int STATE_TUTORIAL = 1;
     private static final int STATE_PLAYING = 2;
     private static final int STATE_ENDING = 3;
+    private static final int STATE_SETTINGS = 4;
     private int gameState = STATE_MENU;
 
     // === PAUSE MENU ===
@@ -403,8 +405,32 @@ public class ChernobylGameCore {
 
     // Menu animation
     private float menuTime = 0f;
-    private int menuHovered = -1;               // -1=none, 0=START, 1=TUTORIAL, 2=QUIT
+    private int menuHovered = -1;               // -1=none, 0=START, 1=TUTORIAL, 2=SETTINGS, 3=QUIT
     private boolean menuEscHeld = false;
+
+    // Settings menu
+    private int settingsTab = 0; // 0=Audio, 1=Controls, 2=Gameplay, 3=Controller
+    private boolean settingsClickHeld = false;
+    private int settingsDragTarget = -1; // 0=music, 1=sfx
+    private boolean musicEnabled = true;
+    private boolean soundEnabled = true;
+    private float musicVolume = 0.5f;
+    private float masterVolume = 1.0f;
+    private boolean controllerEnabled = false;
+
+    // Gamepad input (optional)
+    private final GLFWGamepadState gamepadState = GLFWGamepadState.create();
+    private int activeGamepad = -1;
+    private boolean gamepadConnected = false;
+    private boolean gamepadStartHeld = false;
+    private boolean gamepadSelectHeld = false;
+    private boolean gamepadBackHeld = false;
+    private boolean gamepadUpHeld = false;
+    private boolean gamepadDownHeld = false;
+    private boolean gamepadLeftHeld = false;
+    private boolean gamepadRightHeld = false;
+    private float controllerLookSensitivity = 120f;
+    private float controllerDeadzone = 0.2f;
 
     // Menu explosion particle system
     private static final int MENU_MAX_PARTS = 200;
@@ -438,6 +464,13 @@ public class ChernobylGameCore {
     private long audioContext = 0;
     private int musicBuffer = 0;
     private int musicSource = 0;
+    private int sfxClickBuffer = 0;
+    private int sfxTypingBuffer = 0;
+    private int[] sfxTalkBuffers = new int[3];
+    private int sfxUiSource = 0;
+    private int sfxTypeSource = 0;
+    private int sfxTalkSource = 0;
+    private final Random sfxRng = new Random(9021);
     private boolean audioInitialized = false;
 
     public void init(long window) {
@@ -501,6 +534,8 @@ public class ChernobylGameCore {
             alcMakeContextCurrent(audioContext);
             AL.createCapabilities(ALC.createCapabilities(audioDevice));
 
+            initSfx();
+
             // Try to load OGG file from project folder
             // First try music.ogg, then any .ogg file in the directory
             Path musicPath = Paths.get("music.ogg");
@@ -522,6 +557,7 @@ public class ChernobylGameCore {
             if (musicPath == null || !Files.exists(musicPath)) {
                 System.out.println("[AUDIO] No music.ogg found - place music.ogg in project folder for background music");
                 audioInitialized = true; // context is fine, just no music
+                applyAudioSettings();
                 return;
             }
 
@@ -539,6 +575,7 @@ public class ChernobylGameCore {
                 System.err.println("[AUDIO] Failed to decode music.ogg (error: " + errorOut[0] + ")");
                 MemoryUtil.memFree(fileBuffer);
                 audioInitialized = true;
+                applyAudioSettings();
                 return;
             }
 
@@ -569,11 +606,10 @@ public class ChernobylGameCore {
             musicSource = alGenSources();
             alSourcei(musicSource, AL_BUFFER, musicBuffer);
             alSourcei(musicSource, AL_LOOPING, AL_TRUE);
-            alSourcef(musicSource, AL_GAIN, 0.5f); // 50% volume
+            alSourcef(musicSource, AL_GAIN, musicVolume);
 
-            // Start playing
-            alSourcePlay(musicSource);
             audioInitialized = true;
+            applyAudioSettings();
 
             float duration = (float) samples / sampleRate;
             System.out.println("[AUDIO] Playing music.ogg (" + String.format("%.1f", duration) + "s, " + channels + "ch, " + sampleRate + "Hz) - LOOPING");
@@ -585,6 +621,35 @@ public class ChernobylGameCore {
     }
 
     private void cleanupAudio() {
+        if (sfxUiSource != 0) {
+            alSourceStop(sfxUiSource);
+            alDeleteSources(sfxUiSource);
+            sfxUiSource = 0;
+        }
+        if (sfxTypeSource != 0) {
+            alSourceStop(sfxTypeSource);
+            alDeleteSources(sfxTypeSource);
+            sfxTypeSource = 0;
+        }
+        if (sfxTalkSource != 0) {
+            alSourceStop(sfxTalkSource);
+            alDeleteSources(sfxTalkSource);
+            sfxTalkSource = 0;
+        }
+        if (sfxClickBuffer != 0) {
+            alDeleteBuffers(sfxClickBuffer);
+            sfxClickBuffer = 0;
+        }
+        if (sfxTypingBuffer != 0) {
+            alDeleteBuffers(sfxTypingBuffer);
+            sfxTypingBuffer = 0;
+        }
+        for (int i = 0; i < sfxTalkBuffers.length; i++) {
+            if (sfxTalkBuffers[i] != 0) {
+                alDeleteBuffers(sfxTalkBuffers[i]);
+                sfxTalkBuffers[i] = 0;
+            }
+        }
         if (musicSource != 0) {
             alSourceStop(musicSource);
             alDeleteSources(musicSource);
@@ -603,6 +668,184 @@ public class ChernobylGameCore {
             audioDevice = 0;
         }
         audioInitialized = false;
+    }
+
+    private void applyAudioSettings() {
+        if (!audioInitialized) {
+            return;
+        }
+        alListenerf(AL_GAIN, 1f);
+
+        if (musicSource != 0) {
+            float musicGain = musicEnabled ? musicVolume : 0f;
+            if (musicGain <= 0.001f) {
+                alSourcef(musicSource, AL_GAIN, 0f);
+                alSourcePause(musicSource);
+            } else {
+                alSourcef(musicSource, AL_GAIN, musicGain);
+                int state = alGetSourcei(musicSource, AL_SOURCE_STATE);
+                if (state != AL_PLAYING) {
+                    alSourcePlay(musicSource);
+                }
+            }
+        }
+
+        float sfxGain = soundEnabled ? masterVolume : 0f;
+        if (sfxGain <= 0.001f) {
+            sfxGain = 0f;
+        }
+        if (sfxUiSource != 0) {
+            alSourcef(sfxUiSource, AL_GAIN, sfxGain * 0.8f);
+            if (sfxGain == 0f) alSourceStop(sfxUiSource);
+        }
+        if (sfxTypeSource != 0) {
+            alSourcef(sfxTypeSource, AL_GAIN, sfxGain * 0.7f);
+            if (sfxGain == 0f) alSourceStop(sfxTypeSource);
+        }
+        if (sfxTalkSource != 0) {
+            alSourcef(sfxTalkSource, AL_GAIN, sfxGain * 0.9f);
+            if (sfxGain == 0f) alSourceStop(sfxTalkSource);
+        }
+    }
+
+    private void initSfx() {
+        sfxClickBuffer = createClickBuffer(1200f, 0.06f, 0.35f);
+        sfxTypingBuffer = createClickBuffer(1600f, 0.04f, 0.3f);
+        sfxTalkBuffers[0] = createChatterBuffer(220f, 0.18f, 0.28f);
+        sfxTalkBuffers[1] = createChatterBuffer(260f, 0.16f, 0.26f);
+        sfxTalkBuffers[2] = createChatterBuffer(300f, 0.2f, 0.24f);
+
+        sfxUiSource = alGenSources();
+        alSourcei(sfxUiSource, AL_BUFFER, sfxClickBuffer);
+        alSourcei(sfxUiSource, AL_LOOPING, AL_FALSE);
+
+        sfxTypeSource = alGenSources();
+        alSourcei(sfxTypeSource, AL_BUFFER, sfxTypingBuffer);
+        alSourcei(sfxTypeSource, AL_LOOPING, AL_FALSE);
+
+        sfxTalkSource = alGenSources();
+        alSourcei(sfxTalkSource, AL_LOOPING, AL_FALSE);
+    }
+
+    private int createToneBuffer(float frequency, float durationSeconds, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = Math.max(1, (int) (durationSeconds * sampleRate));
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double sample = Math.sin(2.0 * Math.PI * frequency * t) * amplitude;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createClickBuffer(float frequency, float durationSeconds, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = Math.max(1, (int) (durationSeconds * sampleRate));
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double env = Math.exp(-12.0 * t / durationSeconds);
+            double sample = Math.sin(2.0 * Math.PI * frequency * t) * amplitude * env;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createChatterBuffer(float baseFrequency, float durationSeconds, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = Math.max(1, (int) (durationSeconds * sampleRate));
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double mod = 0.5 + 0.5 * Math.sin(2.0 * Math.PI * 8.0 * t);
+            double carrier = Math.sin(2.0 * Math.PI * baseFrequency * t)
+                + 0.5 * Math.sin(2.0 * Math.PI * baseFrequency * 1.8 * t);
+            double sample = carrier * amplitude * mod;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private void playSfxClick() {
+        if (!audioInitialized || !soundEnabled || sfxUiSource == 0) {
+            return;
+        }
+        alSourceStop(sfxUiSource);
+        alSourcePlay(sfxUiSource);
+    }
+
+    private void playSfxTyping() {
+        if (!audioInitialized || !soundEnabled || sfxTypeSource == 0) {
+            return;
+        }
+        alSourceStop(sfxTypeSource);
+        alSourcePlay(sfxTypeSource);
+    }
+
+    private void playSfxTalk() {
+        if (!audioInitialized || !soundEnabled || sfxTalkSource == 0) {
+            return;
+        }
+        int idx = sfxRng.nextInt(sfxTalkBuffers.length);
+        int buffer = sfxTalkBuffers[idx];
+        if (buffer == 0) {
+            return;
+        }
+        alSourceStop(sfxTalkSource);
+        alSourcei(sfxTalkSource, AL_BUFFER, buffer);
+        alSourcef(sfxTalkSource, AL_PITCH, 0.9f + sfxRng.nextFloat() * 0.3f);
+        alSourcePlay(sfxTalkSource);
+    }
+
+    private int findGamepad() {
+        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; jid++) {
+            if (glfwJoystickIsGamepad(jid)) {
+                return jid;
+            }
+        }
+        return -1;
+    }
+
+    private boolean pollGamepadState() {
+        if (!controllerEnabled) {
+            gamepadConnected = false;
+            activeGamepad = -1;
+            return false;
+        }
+        int jid = findGamepad();
+        if (jid < 0) {
+            gamepadConnected = false;
+            activeGamepad = -1;
+            return false;
+        }
+        activeGamepad = jid;
+        gamepadConnected = glfwGetGamepadState(jid, gamepadState);
+        return gamepadConnected;
+    }
+
+    private float applyDeadzone(float value, float deadzone) {
+        float abs = Math.abs(value);
+        if (abs < deadzone) {
+            return 0f;
+        }
+        float scaled = (abs - deadzone) / (1f - deadzone);
+        return Math.copySign(scaled, value);
     }
 
     private void createPlayerModel() {
@@ -749,35 +992,57 @@ public class ChernobylGameCore {
         float btnGap = 55;
 
         // Hover detection
-        menuHovered = -1;
-        for (int i = 0; i < 3; i++) {
+        int mouseHover = -1;
+        int btnCount = 4;
+        for (int i = 0; i < btnCount; i++) {
             float by = btnStartY - i * btnGap;
             if (mouseX >= btnX && mouseX <= btnX + btnW &&
                 mouseY >= by && mouseY <= by + btnH) {
-                menuHovered = i;
+                mouseHover = i;
             }
+        }
+        boolean padActive = pollGamepadState();
+        if (mouseHover >= 0) {
+            menuHovered = mouseHover;
+        } else if (!padActive) {
+            menuHovered = -1;
+        }
+        if (padActive) {
+            boolean upNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_UP) == GLFW_PRESS;
+            boolean downNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) == GLFW_PRESS;
+            if (upNow && !gamepadUpHeld) {
+                if (menuHovered < 0) {
+                    menuHovered = 0;
+                } else {
+                    menuHovered = (menuHovered - 1 + btnCount) % btnCount;
+                }
+            }
+            if (downNow && !gamepadDownHeld) {
+                if (menuHovered < 0) {
+                    menuHovered = 0;
+                } else {
+                    menuHovered = (menuHovered + 1) % btnCount;
+                }
+            }
+            gamepadUpHeld = upNow;
+            gamepadDownHeld = downNow;
         }
 
         // Click detection
         boolean leftNow = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         if (leftNow && !mouseLeftHeld) {
-            if (menuHovered == 0) {
-                // START GAME
-                gameState = STATE_PLAYING;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                firstMouse = true;
-                startStory();
-            } else if (menuHovered == 1) {
-                // TUTORIAL
-                gameState = STATE_TUTORIAL;
-                tutorialStep = 0;
-            } else if (menuHovered == 2) {
-                // QUIT
-                glfwSetWindowShouldClose(window, true);
-            }
+            activateMenuSelection(window, menuHovered);
         }
         mouseLeftHeld = leftNow;
         mouseRightHeld = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+
+        if (padActive) {
+            boolean selectNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS;
+            if (selectNow && !gamepadSelectHeld) {
+                activateMenuSelection(window, menuHovered);
+            }
+            gamepadSelectHeld = selectNow;
+        }
 
         // === Explosion animation cycle ===
         // Cycle: 0-3s building intact, 3s explosion, 3-8s debris, 8-10s fade, 10s reset
@@ -834,6 +1099,29 @@ public class ChernobylGameCore {
         if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
             if (!fKeyPressed) { fKeyPressed = true; toggleFullscreen(window); }
         } else { fKeyPressed = false; }
+    }
+
+    private void activateMenuSelection(long window, int selection) {
+        if (selection >= 0) {
+            playSfxClick();
+        }
+        if (selection == 0) {
+            // START GAME
+            gameState = STATE_PLAYING;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            firstMouse = true;
+            startStory();
+        } else if (selection == 1) {
+            // TUTORIAL
+            gameState = STATE_TUTORIAL;
+            tutorialStep = 0;
+        } else if (selection == 2) {
+            // SETTINGS
+            gameState = STATE_SETTINGS;
+        } else if (selection == 3) {
+            // QUIT
+            glfwSetWindowShouldClose(window, true);
+        }
     }
 
     private void updateTutorial(long window, float dt) {
@@ -902,6 +1190,137 @@ public class ChernobylGameCore {
         } else { fKeyPressed = false; }
     }
 
+    private void updateSettings(long window, float dt) {
+        if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_NORMAL) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+
+        double[] mx = new double[1], my = new double[1];
+        glfwGetCursorPos(window, mx, my);
+        int[] ww = new int[1], wh = new int[1];
+        glfwGetWindowSize(window, ww, wh);
+        float mouseX = (float) mx[0];
+        float mouseY = (float)(wh[0] - my[0]);
+        float screenW = (float) ww[0];
+        float screenH = (float) wh[0];
+
+        boolean leftNow = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        boolean clicked = leftNow && !settingsClickHeld;
+        settingsClickHeld = leftNow;
+        if (!leftNow) {
+            settingsDragTarget = -1;
+        }
+
+        float cardW = screenW * 0.82f;
+        float cardH = screenH * 0.82f;
+        float cardX = (screenW - cardW) / 2;
+        float cardY = (screenH - cardH) / 2;
+
+        String[] tabs = {"AUDIO", "CONTROLS", "GAMEPLAY", "CONTROLLER"};
+        float tabGap = 6f;
+        float tabH = 40f;
+        float tabW = (cardW - tabGap * (tabs.length - 1)) / tabs.length;
+        float tabY = cardY + cardH - tabH - 80f;
+
+        if (clicked) {
+            for (int i = 0; i < tabs.length; i++) {
+                float tabX = cardX + i * (tabW + tabGap);
+                if (mouseX >= tabX && mouseX <= tabX + tabW && mouseY >= tabY && mouseY <= tabY + tabH) {
+                    if (settingsTab != i) {
+                        settingsTab = i;
+                        playSfxClick();
+                    }
+                }
+            }
+        }
+
+        float backW = 200f, backH = 50f;
+        float backX = cardX + 25f;
+        float backY = cardY + 18f;
+        if (clicked && mouseX >= backX && mouseX <= backX + backW && mouseY >= backY && mouseY <= backY + backH) {
+            playSfxClick();
+            gameState = STATE_MENU;
+        }
+
+        float rowX = cardX + 60f;
+        float rowW = cardW - 120f;
+        float rowH = 50f;
+        float rowStartY = tabY - 100f;
+        float rowGap = 70f;
+
+        if (settingsTab == 0) {
+            float musicY = rowStartY;
+            float soundY = rowStartY - rowGap;
+            float sliderX = rowX + 180f;
+            float sliderW = rowW - 220f;
+            float sliderH = 12f;
+
+            if (clicked) {
+                if (mouseX >= rowX && mouseX <= sliderX - 20f && mouseY >= musicY && mouseY <= musicY + rowH) {
+                    musicEnabled = !musicEnabled;
+                    applyAudioSettings();
+                    playSfxClick();
+                } else if (mouseX >= sliderX && mouseX <= sliderX + sliderW && mouseY >= musicY + 12f && mouseY <= musicY + 12f + sliderH + 12f) {
+                    musicVolume = Math.max(0f, Math.min(1f, (mouseX - sliderX) / sliderW));
+                    settingsDragTarget = 0;
+                    applyAudioSettings();
+                }
+
+                if (mouseX >= rowX && mouseX <= sliderX - 20f && mouseY >= soundY && mouseY <= soundY + rowH) {
+                    soundEnabled = !soundEnabled;
+                    applyAudioSettings();
+                    playSfxClick();
+                } else if (mouseX >= sliderX && mouseX <= sliderX + sliderW && mouseY >= soundY + 12f && mouseY <= soundY + 12f + sliderH + 12f) {
+                    masterVolume = Math.max(0f, Math.min(1f, (mouseX - sliderX) / sliderW));
+                    settingsDragTarget = 1;
+                    applyAudioSettings();
+                }
+            }
+
+            if (leftNow && settingsDragTarget == 0) {
+                musicVolume = Math.max(0f, Math.min(1f, (mouseX - sliderX) / sliderW));
+                applyAudioSettings();
+            } else if (leftNow && settingsDragTarget == 1) {
+                masterVolume = Math.max(0f, Math.min(1f, (mouseX - sliderX) / sliderW));
+                applyAudioSettings();
+            }
+        }
+
+        if (settingsTab == 3) {
+            float controllerY = rowStartY;
+            if (clicked && mouseX >= rowX && mouseX <= rowX + rowW && mouseY >= controllerY && mouseY <= controllerY + rowH) {
+                controllerEnabled = !controllerEnabled;
+                if (!controllerEnabled) {
+                    activeGamepad = -1;
+                    gamepadConnected = false;
+                }
+                playSfxClick();
+            }
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            if (!menuEscHeld) {
+                menuEscHeld = true;
+                gameState = STATE_MENU;
+            }
+        } else {
+            menuEscHeld = false;
+        }
+
+        boolean padActive = pollGamepadState();
+        if (padActive) {
+            boolean backNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS;
+            if (backNow && !gamepadBackHeld) {
+                gameState = STATE_MENU;
+            }
+            gamepadBackHeld = backNow;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
+            if (!fKeyPressed) { fKeyPressed = true; toggleFullscreen(window); }
+        } else { fKeyPressed = false; }
+    }
+
     // === PAUSE MENU (Minecraft-style) ===
     private void updatePauseMenu(long window, float dt) {
         pauseMenuTime += dt;
@@ -941,22 +1360,67 @@ public class ChernobylGameCore {
             }
         }
 
+        boolean padActive = pollGamepadState();
+        if (padActive) {
+            boolean upNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_UP) == GLFW_PRESS;
+            boolean downNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) == GLFW_PRESS;
+            if (upNow && !gamepadUpHeld) {
+                if (pauseMenuHovered < 0) pauseMenuHovered = 0;
+                else pauseMenuHovered = (pauseMenuHovered - 1 + btnCount) % btnCount;
+            }
+            if (downNow && !gamepadDownHeld) {
+                if (pauseMenuHovered < 0) pauseMenuHovered = 0;
+                else pauseMenuHovered = (pauseMenuHovered + 1) % btnCount;
+            }
+            gamepadUpHeld = upNow;
+            gamepadDownHeld = downNow;
+        }
+
         // Click detection
         boolean leftNow = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         if (leftNow && !mouseLeftHeld) {
             if (pauseMenuHovered == 0) {
                 // RESUME
+                playSfxClick();
                 pauseMenuOpen = false;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 firstMouse = true;
             } else if (pauseMenuHovered == 1) {
                 // QUIT TO TITLE
+                playSfxClick();
                 pauseMenuOpen = false;
                 gameState = STATE_MENU;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
         }
         mouseLeftHeld = leftNow;
+
+        if (padActive) {
+            boolean selectNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS;
+            if (selectNow && !gamepadSelectHeld) {
+                if (pauseMenuHovered == 0) {
+                    playSfxClick();
+                    pauseMenuOpen = false;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    firstMouse = true;
+                } else if (pauseMenuHovered == 1) {
+                    playSfxClick();
+                    pauseMenuOpen = false;
+                    gameState = STATE_MENU;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                }
+            }
+            gamepadSelectHeld = selectNow;
+
+            boolean backNow = gamepadState.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS;
+            if (backNow && !gamepadBackHeld) {
+                playSfxClick();
+                pauseMenuOpen = false;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                firstMouse = true;
+            }
+            gamepadBackHeld = backNow;
+        }
 
         // ESC also closes pause menu
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -1202,14 +1666,15 @@ public class ChernobylGameCore {
         float btnX = (screenW - btnW) / 2;
         float btnStartY = screenH * 0.74f;
         float btnGap = 55;
-        String[] btnLabels = {"START GAME", "TUTORIAL", "QUIT"};
+        String[] btnLabels = {"START GAME", "TUTORIAL", "SETTINGS", "QUIT"};
         float[][] btnColors = {
             {0.6f, 0.35f, 0.08f},  // Warm amber
             {0.45f, 0.25f, 0.08f},  // Dark amber
+            {0.35f, 0.25f, 0.18f},  // Muted bronze
             {0.55f, 0.15f, 0.05f}   // Deep red-orange
         };
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < btnLabels.length; i++) {
             float by = btnStartY - i * btnGap;
             boolean hovered = (menuHovered == i);
             float brightness = hovered ? 1.4f : 1f;
@@ -1237,6 +1702,165 @@ public class ChernobylGameCore {
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
+    }
+
+    private void renderSettingsScreen() {
+        setupHUD2D();
+
+        int[] wBuf = new int[1], hBuf = new int[1];
+        glfwGetFramebufferSize(glfwGetCurrentContext(), wBuf, hBuf);
+        float screenW = wBuf[0] > 0 ? wBuf[0] : ChernobylGame.WIDTH;
+        float screenH = hBuf[0] > 0 ? hBuf[0] : ChernobylGame.HEIGHT;
+
+        drawHUDRect(0, 0, screenW, screenH, 0.06f, 0.03f, 0.01f, 1f);
+
+        float cardW = screenW * 0.82f;
+        float cardH = screenH * 0.82f;
+        float cardX = (screenW - cardW) / 2;
+        float cardY = (screenH - cardH) / 2;
+        drawHUDRect(cardX, cardY, cardW, cardH, 0.08f, 0.05f, 0.02f, 0.95f);
+        drawHUDRect(cardX, cardY + cardH - 3, cardW, 3, 0.7f, 0.4f, 0.1f, 1f);
+        drawHUDRect(cardX, cardY, cardW, 3, 0.7f, 0.4f, 0.1f, 1f);
+        drawHUDRect(cardX, cardY, 3, cardH, 0.7f, 0.4f, 0.1f, 1f);
+        drawHUDRect(cardX + cardW - 3, cardY, 3, cardH, 0.7f, 0.4f, 0.1f, 1f);
+
+        String title = "SETTINGS";
+        float titleW = title.length() * (4 * 3 + 1 * 3);
+        drawHUDText(title, (screenW - titleW) / 2, cardY + cardH - 35, 3, 1f, 0.7f, 0.2f, 1f);
+
+        String[] tabs = {"AUDIO", "CONTROLS", "GAMEPLAY", "CONTROLLER"};
+        float tabGap = 6f;
+        float tabH = 40f;
+        float tabW = (cardW - tabGap * (tabs.length - 1)) / tabs.length;
+        float tabY = cardY + cardH - tabH - 80f;
+        for (int i = 0; i < tabs.length; i++) {
+            float tabX = cardX + i * (tabW + tabGap);
+            boolean active = (settingsTab == i);
+            float br = active ? 0.55f : 0.25f;
+            float bg = active ? 0.35f : 0.15f;
+            float bb = active ? 0.12f : 0.08f;
+            drawHUDRect(tabX, tabY, tabW, tabH, br, bg, bb, active ? 0.95f : 0.6f);
+            float tabTextW = tabs[i].length() * (4 * 2 + 1 * 2);
+            drawHUDText(tabs[i], tabX + (tabW - tabTextW) / 2, tabY + 12, 2, 1f, 1f, 1f, 1f);
+        }
+
+        float rowX = cardX + 60f;
+        float rowW = cardW - 120f;
+        float rowH = 50f;
+        float rowStartY = tabY - 100f;
+        float rowGap = 70f;
+
+        if (settingsTab == 0) {
+            drawHUDText("AUDIO OUTPUT", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
+            drawSettingsSlider("MUSIC", musicEnabled, musicVolume, rowX, rowStartY, rowW, rowH);
+            drawSettingsSlider("SOUND FX", soundEnabled, masterVolume, rowX, rowStartY - rowGap, rowW, rowH);
+            drawHUDText("NOTE: MUSIC REQUIRES A MUSIC.OGG FILE IN THE PROJECT FOLDER", rowX, rowStartY - rowGap - 50, 1, 0.6f, 0.5f, 0.3f, 0.9f);
+        } else if (settingsTab == 1) {
+            drawHUDText("KEYBOARD & MOUSE", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
+            String[] lines = new String[] {
+                ">W/A/S/D - MOVE        SHIFT - SPRINT",
+                ">MOUSE - LOOK          SPACE - JUMP",
+                ">E - INTERACT          T - TALK",
+                ">M - PAUSE MENU        ESC - CLOSE PANELS",
+                ">F - FULLSCREEN        V - 3RD PERSON"
+            };
+            drawSettingsLines(lines, rowX, rowStartY + 20);
+        } else if (settingsTab == 2) {
+            drawHUDText("HOW TO PLAY", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
+            String[] lines = new String[] {
+                "*FOLLOW THE OBJECTIVE TEXT AT THE TOP OF THE HUD",
+                "*USE E ON CONTROL PANELS, ELENA, AND INDICATORS",
+                "*KEEP STABILITY HIGH AND MONITOR CORE READINGS",
+                "*SCAN ELENA REGULARLY TO AVOID XENON DANGER",
+                "*WHEN PROMPTED, PRESS AZ-5 TO END THE TEST"
+            };
+            drawSettingsLines(lines, rowX, rowStartY + 20);
+        } else if (settingsTab == 3) {
+            boolean available = findGamepad() >= 0;
+            drawHUDText("CONTROLLER", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
+            drawSettingsToggle("ENABLE CONTROLLER", controllerEnabled, rowX, rowStartY, rowW, rowH);
+            String status = available ? "CONTROLLER DETECTED" : "NO CONTROLLER DETECTED";
+            drawHUDText(status, rowX, rowStartY - rowGap + 10, 2, available ? 0.4f : 0.9f, available ? 0.9f : 0.35f, 0.4f, 1f);
+
+            String[] lines = new String[] {
+                ">LEFT STICK - MOVE      RIGHT STICK - LOOK",
+                ">X (CROSS) - JUMP       SQUARE - INTERACT",
+                ">TRIANGLE - TALK        OPTIONS - PAUSE",
+                ">L1 - SPRINT            CIRCLE - BACK"
+            };
+            drawSettingsLines(lines, rowX, rowStartY - rowGap - 20);
+            drawHUDText("PS CONTROLLERS MAY REQUIRE STEAM INPUT OR DS4WINDOWS", rowX, rowStartY - rowGap - 120, 1, 0.6f, 0.5f, 0.3f, 0.9f);
+        }
+
+        float backW = 200f, backH = 50f;
+        float backX = cardX + 25f;
+        float backY = cardY + 18f;
+        drawHUDRect(backX, backY, backW, backH, 0.4f, 0.2f, 0.08f, 0.9f);
+        drawHUDRect(backX, backY + backH - 2, backW, 2, 0.6f, 0.35f, 0.1f, 1f);
+        float backTW = 4 * 10;
+        drawHUDText("BACK", backX + (backW - backTW) / 2, backY + 18, 2, 1f, 0.8f, 0.7f, 1f);
+
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+    }
+
+    private void drawSettingsToggle(String label, boolean enabled, float x, float y, float w, float h) {
+        float baseR = enabled ? 0.4f : 0.25f;
+        float baseG = enabled ? 0.6f : 0.2f;
+        float baseB = enabled ? 0.18f : 0.12f;
+        drawHUDRect(x, y, w, h, baseR, baseG, baseB, 0.9f);
+        drawHUDRect(x, y + h - 2, w, 2, baseR * 1.5f, baseG * 1.5f, baseB * 1.5f, 1f);
+        String state = enabled ? "ON" : "OFF";
+        String text = label + ": " + state;
+        float tw = text.length() * (4 * 2 + 1 * 2);
+        drawHUDText(text, x + (w - tw) / 2, y + 16, 2, 1f, 1f, 1f, 1f);
+    }
+
+    private void drawSettingsSlider(String label, boolean enabled, float value, float x, float y, float w, float h) {
+        float baseR = enabled ? 0.35f : 0.2f;
+        float baseG = enabled ? 0.25f : 0.15f;
+        float baseB = enabled ? 0.12f : 0.08f;
+        drawHUDRect(x, y, w, h, baseR, baseG, baseB, 0.9f);
+        drawHUDRect(x, y + h - 2, w, 2, baseR * 1.4f, baseG * 1.4f, baseB * 1.4f, 1f);
+
+        float sliderX = x + 180f;
+        float sliderW = w - 220f;
+        float sliderY = y + 18f;
+        float sliderH = 12f;
+        float fillW = sliderW * Math.max(0f, Math.min(1f, value));
+
+        float trackR = enabled ? 0.2f : 0.12f;
+        float trackG = enabled ? 0.15f : 0.1f;
+        float trackB = enabled ? 0.08f : 0.06f;
+        drawHUDRect(sliderX, sliderY, sliderW, sliderH, trackR, trackG, trackB, 1f);
+        drawHUDRect(sliderX, sliderY, fillW, sliderH, 0.8f, 0.45f, 0.1f, 1f);
+        float knobX = sliderX + fillW - 6f;
+        drawHUDRect(knobX, sliderY - 4f, 12f, sliderH + 8f, 0.95f, 0.8f, 0.5f, 1f);
+
+        String state = enabled ? "ON" : "OFF";
+        String text = label + ": " + state;
+        float tw = text.length() * (4 * 2 + 1 * 2);
+        drawHUDText(text, x + 12f, y + 16, 2, 1f, 1f, 1f, 1f);
+
+        int pct = Math.round(Math.max(0f, Math.min(1f, value)) * 100f);
+        String pctText = pct + "%";
+        float pctW = pctText.length() * (4 * 2 + 1 * 2);
+        drawHUDText(pctText, sliderX + sliderW - pctW, y + 16, 2, 0.9f, 0.8f, 0.6f, 1f);
+    }
+
+    private void drawSettingsLines(String[] lines, float x, float topY) {
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            float lr = 0.8f, lg = 0.8f, lb = 0.75f, la = 1f;
+            if (line.startsWith("*")) {
+                line = line.substring(1);
+                lr = 1f; lg = 0.7f; lb = 0.2f;
+            } else if (line.startsWith(">")) {
+                line = line.substring(1);
+                lr = 0.4f; lg = 0.8f; lb = 1f;
+            }
+            drawHUDText(line, x, topY - i * 26, 2, lr, lg, lb, la);
+        }
     }
 
     // Returns {r, g, b} for a building block at grid position, or null if empty
@@ -2940,7 +3564,9 @@ public class ChernobylGameCore {
             }
         }
 
-        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
+        boolean talkNow = glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS
+            || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_Y) == GLFW_PRESS);
+        if (talkNow) {
             if (!tKeyPressed) {
                 tKeyPressed = true;
                 if (!dialogueActive && showInteractPrompt && !nearbyNPCName.isEmpty()) {
@@ -2948,6 +3574,7 @@ public class ChernobylGameCore {
                     dialogueSpeaker = nearbyNPCName.toUpperCase();
                     dialoguePage = 0;
                     dialogueActive = true;
+                    playSfxTalk();
                 } else if (dialogueActive) {
                     advanceDialoguePage();
                 }
@@ -2956,7 +3583,9 @@ public class ChernobylGameCore {
             tKeyPressed = false;
         }
 
-        if (glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS) {
+        boolean confirmNow = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS
+            || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS);
+        if (confirmNow) {
             if (!enterKeyPressed) {
                 enterKeyPressed = true;
                 if (dialogueActive) {
@@ -2972,6 +3601,7 @@ public class ChernobylGameCore {
         int linesPerPage = 6;
         int totalPages = (dialogueLines.length + linesPerPage - 1) / linesPerPage;
         dialoguePage++;
+        playSfxTyping();
         if (dialoguePage >= totalPages) {
             dialogueActive = false;
             dialoguePage = 0;
@@ -4040,9 +4670,11 @@ public class ChernobylGameCore {
                 firstMouse = true;
             }
 
-            // ESC closes machine UI (reserve right-click for machine controls)
-            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-                if (!escKeyPressed) {
+            // ESC or controller back closes machine UI (reserve right-click for machine controls)
+            boolean backNow = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS
+                || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS);
+            if (backNow) {
+                if (!escKeyPressed && !gamepadBackHeld) {
                     escKeyPressed = true;
                     machineUIActive = false;
                     activeMachine = "";
@@ -4054,7 +4686,9 @@ public class ChernobylGameCore {
                 }
             } else {
                 escKeyPressed = false;
+                gamepadBackHeld = false;
             }
+            gamepadBackHeld = gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_B) == GLFW_PRESS;
 
             float screenW = (float) winW[0];
             float screenH = (float) winH[0];
@@ -4150,16 +4784,22 @@ public class ChernobylGameCore {
                     }
                 }
 
-                // Keyboard still works too (UP/DOWN select, LEFT/RIGHT adjust)
-                if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                // Keyboard or gamepad (UP/DOWN select, LEFT/RIGHT adjust)
+                boolean upNow = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_UP) == GLFW_PRESS);
+                boolean downNow = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) == GLFW_PRESS);
+                if (upNow) {
                     if (!upKeyHeld) { upKeyHeld = true; selectedControl = Math.max(0, selectedControl - 1); }
                 } else { upKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                if (downNow) {
                     if (!downKeyHeld) { downKeyHeld = true; selectedControl = Math.min(5, selectedControl + 1); }
                 } else { downKeyHeld = false; }
 
-                boolean leftPress = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
-                boolean rightPress = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
+                boolean leftPress = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_LEFT) == GLFW_PRESS);
+                boolean rightPress = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) == GLFW_PRESS);
                 controlRepeatTimer += dt;
                 if ((leftPress || rightPress) && controlRepeatTimer > 0.08f) {
                     controlRepeatTimer = 0;
@@ -4168,9 +4808,11 @@ public class ChernobylGameCore {
                 }
                 if (!leftPress && !rightPress) controlRepeatTimer = 1f;
 
-                // Space for AZ-5
+                // Space or controller A for AZ-5
                 if (storyPhase == 7 && !az5Pressed) {
-                    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                    boolean az5Now = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                        || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS);
+                    if (az5Now) {
                         if (!spaceKeyPressed) {
                             spaceKeyPressed = true;
                             az5Pressed = true;
@@ -4261,20 +4903,30 @@ public class ChernobylGameCore {
                     elenaScanNeglectPenalty = 0f;
                 }
 
-                // Keyboard still works for ELENA
-                if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                // Keyboard or gamepad for ELENA
+                boolean elenaUpNow = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_UP) == GLFW_PRESS);
+                boolean elenaDownNow = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) == GLFW_PRESS);
+                boolean elenaLeftNow = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_LEFT) == GLFW_PRESS);
+                boolean elenaRightNow = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) == GLFW_PRESS);
+                if (elenaUpNow) {
                     if (!upKeyHeld) { upKeyHeld = true; elenaSelectedSector = Math.max(0, elenaSelectedSector - 18); }
                 } else { upKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                if (elenaDownNow) {
                     if (!downKeyHeld) { downKeyHeld = true; elenaSelectedSector = Math.min(323, elenaSelectedSector + 18); }
                 } else { downKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+                if (elenaLeftNow) {
                     if (!leftKeyHeld) { leftKeyHeld = true; elenaSelectedSector = Math.max(0, elenaSelectedSector - 1); }
                 } else { leftKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+                if (elenaRightNow) {
                     if (!rightKeyHeld) { rightKeyHeld = true; elenaSelectedSector = Math.min(323, elenaSelectedSector + 1); }
                 } else { rightKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                boolean scanNow = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS);
+                if (scanNow) {
                     if (!spaceKeyPressed && elenaSelectedSector >= 0) {
                         spaceKeyPressed = true;
                         elenaScanTimer = 2f;
@@ -4374,15 +5026,21 @@ public class ChernobylGameCore {
                 }
                 if (!leftNow && !rightNow) pumpConsoleClickRepeat = 0.2f;
 
-                if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                boolean upNow = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_UP) == GLFW_PRESS);
+                boolean downNow = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_DOWN) == GLFW_PRESS);
+                if (upNow) {
                     if (!upKeyHeld) { upKeyHeld = true; pumpConsoleSelection = Math.max(0, pumpConsoleSelection - 1); }
                 } else { upKeyHeld = false; }
-                if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                if (downNow) {
                     if (!downKeyHeld) { downKeyHeld = true; pumpConsoleSelection = Math.min(optionCount - 1, pumpConsoleSelection + 1); }
                 } else { downKeyHeld = false; }
 
-                boolean leftPress = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
-                boolean rightPress = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
+                boolean leftPress = glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_LEFT) == GLFW_PRESS);
+                boolean rightPress = glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT) == GLFW_PRESS);
                 controlRepeatTimer += dt;
                 if ((leftPress || rightPress) && controlRepeatTimer > 0.1f) {
                     controlRepeatTimer = 0f;
@@ -4391,7 +5049,9 @@ public class ChernobylGameCore {
                 }
                 if (!leftPress && !rightPress) controlRepeatTimer = 0.25f;
 
-                if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                boolean confirmNow = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                    || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS);
+                if (confirmNow) {
                     if (!spaceKeyPressed) {
                         spaceKeyPressed = true;
                         pumpConsoleSelection = 4;
@@ -4435,7 +5095,9 @@ public class ChernobylGameCore {
 
         // Press E to open machine
         if (!nearbyMachine.isEmpty() && !dialogueActive) {
-            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+            boolean interactNow = glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS
+                || (gamepadConnected && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_X) == GLFW_PRESS);
+            if (interactNow) {
                 if (!xKeyPressed) {
                     xKeyPressed = true;
                     machineUIActive = true;
@@ -10108,17 +10770,23 @@ public class ChernobylGameCore {
             updateTutorial(window, deltaTime);
             return;
         }
+        if (gameState == STATE_SETTINGS) {
+            updateSettings(window, deltaTime);
+            return;
+        }
         if (gameState == STATE_ENDING) {
             updateEnding(window, deltaTime);
             return;
         }
 
         // === PLAYING state update ===
+        boolean padActive = pollGamepadState();
 
         // M key: toggle pause menu (with debounce)
-        if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-            if (!mKeyPressed) {
-                mKeyPressed = true;
+        boolean pauseKey = glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS;
+        boolean pausePad = padActive && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_START) == GLFW_PRESS;
+        if (pauseKey || pausePad) {
+            if (!mKeyPressed && !gamepadStartHeld) {
                 pauseMenuOpen = !pauseMenuOpen;
                 if (pauseMenuOpen) {
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -10129,9 +10797,9 @@ public class ChernobylGameCore {
                     firstMouse = true;
                 }
             }
-        } else {
-            mKeyPressed = false;
         }
+        mKeyPressed = pauseKey;
+        gamepadStartHeld = pausePad;
 
         // If pause menu is open, handle its input and skip game update
         if (pauseMenuOpen) {
@@ -10330,6 +10998,16 @@ public class ChernobylGameCore {
             pitch += yOffset * mouseSensitivity;
             pitch = Math.max(-89f, Math.min(89f, pitch));
         }
+
+        if (padActive && !dialogueActive && !machineUIActive) {
+            float lookX = applyDeadzone(gamepadState.axes(GLFW_GAMEPAD_AXIS_RIGHT_X), controllerDeadzone);
+            float lookY = applyDeadzone(gamepadState.axes(GLFW_GAMEPAD_AXIS_RIGHT_Y), controllerDeadzone);
+            if (Math.abs(lookX) > 0.001f || Math.abs(lookY) > 0.001f) {
+                yaw += lookX * controllerLookSensitivity * deltaTime;
+                pitch -= lookY * controllerLookSensitivity * deltaTime;
+                pitch = Math.max(-89f, Math.min(89f, pitch));
+            }
+        }
         
         // Calculate camera direction
         Vector3f direction = new Vector3f(
@@ -10347,7 +11025,10 @@ public class ChernobylGameCore {
         float speed = moveSpeed * deltaTime;
         
         // Shift key for sprinting
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
+        boolean sprintKey = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+        boolean sprintPad = padActive && (gamepadState.buttons(GLFW_GAMEPAD_BUTTON_LEFT_BUMPER) == GLFW_PRESS
+            || gamepadState.buttons(GLFW_GAMEPAD_BUTTON_LEFT_THUMB) == GLFW_PRESS);
+        if (sprintKey || sprintPad) {
             speed *= 2.5f;
         }
         if (creativeMode) {
@@ -10359,28 +11040,39 @@ public class ChernobylGameCore {
         Vector3f newPos = new Vector3f(cameraPos);
         
         boolean frozen = (dialogueActive || machineUIActive) && !creativeMode;
-        boolean movingForward = !frozen && glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
-        boolean movingBack = !frozen && glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
-        boolean movingLeft = !frozen && glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
-        boolean movingRight = !frozen && glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
-        isPlayerWalking = movingForward || movingBack || movingLeft || movingRight;
+        float moveForwardAxis = 0f;
+        float moveRightAxis = 0f;
+        if (!frozen) {
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) moveForwardAxis += 1f;
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) moveForwardAxis -= 1f;
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) moveRightAxis += 1f;
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) moveRightAxis -= 1f;
+            if (padActive) {
+                float padLX = applyDeadzone(gamepadState.axes(GLFW_GAMEPAD_AXIS_LEFT_X), controllerDeadzone);
+                float padLY = applyDeadzone(gamepadState.axes(GLFW_GAMEPAD_AXIS_LEFT_Y), controllerDeadzone);
+                moveRightAxis += padLX;
+                moveForwardAxis += -padLY;
+            }
+        }
 
-        if (movingForward) {
-            newPos.add(new Vector3f(forward).mul(speed));
+        float moveLen = (float) Math.sqrt(moveForwardAxis * moveForwardAxis + moveRightAxis * moveRightAxis);
+        if (moveLen > 1f) {
+            moveForwardAxis /= moveLen;
+            moveRightAxis /= moveLen;
         }
-        if (movingBack) {
-            newPos.sub(new Vector3f(forward).mul(speed));
+
+        isPlayerWalking = Math.abs(moveForwardAxis) > 0.01f || Math.abs(moveRightAxis) > 0.01f;
+
+        if (moveForwardAxis != 0f) {
+            newPos.add(new Vector3f(forward).mul(speed * moveForwardAxis));
         }
-        if (movingLeft) {
-            newPos.sub(new Vector3f(right).mul(speed));
-        }
-        if (movingRight) {
-            newPos.add(new Vector3f(right).mul(speed));
+        if (moveRightAxis != 0f) {
+            newPos.add(new Vector3f(right).mul(speed * moveRightAxis));
         }
 
         // Walk animation phase
         if (isPlayerWalking && isOnGround) {
-            float animSpeed = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) ? 18f : 10f;
+            float animSpeed = (sprintKey || sprintPad) ? 18f : 10f;
             walkAnimPhase += animSpeed * deltaTime;
         } else {
             // Smoothly return to rest pose
@@ -10413,7 +11105,9 @@ public class ChernobylGameCore {
         }
         
         // Jump with Space key
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && isOnGround) {
+        boolean jumpPressed = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+            || (padActive && gamepadState.buttons(GLFW_GAMEPAD_BUTTON_A) == GLFW_PRESS);
+        if (jumpPressed && isOnGround) {
             velocityY = JUMP_VELOCITY;
             isOnGround = false;
         }
@@ -10983,6 +11677,10 @@ public class ChernobylGameCore {
         }
         if (gameState == STATE_TUTORIAL) {
             renderTutorialScreen();
+            return;
+        }
+        if (gameState == STATE_SETTINGS) {
+            renderSettingsScreen();
             return;
         }
         if (gameState == STATE_ENDING) {
