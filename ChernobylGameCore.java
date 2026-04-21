@@ -1,4 +1,4 @@
- import org.joml.Matrix4f;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.lwjgl.BufferUtils;
@@ -23,7 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Map; 
 import java.util.Random;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -168,7 +168,7 @@ public class ChernobylGameCore {
     private static final int REACTOR_HALL_WIDTH_BLOCKS = 42;
     private static final int REACTOR_HALL_DEPTH_BLOCKS = 24;
     private static final float REACTOR_HALL_MEZZANINE_RATIO = 0.55f;
-    private static final int REACTOR_HALL_CATWALK_WIDTH_BLOCKS = 2;
+    private static final int REACTOR_HALL_CATWALK_WIDTH_BLOCKS = 5;
     private static final int REACTOR_HALL_TALL_HEIGHT_BLOCKS = Math.round(REACTOR_HALL_BASE_HEIGHT_BLOCKS * REACTOR_HALL_HEIGHT_SCALE);
     private static final float REACTOR_HALL_MEZZANINE_Y = REACTOR_HALL_FLOOR_Y + REACTOR_HALL_TALL_HEIGHT_BLOCKS * BLOCK_SIZE * REACTOR_HALL_MEZZANINE_RATIO;
     private static final float REACTOR_HALL_WINDOW_X = -17 * BLOCK_SIZE;
@@ -177,10 +177,18 @@ public class ChernobylGameCore {
     private static final float REACTOR_HALL_BACK_Z = -REACTOR_HALL_FRONT_Z;
     private static final float REACTOR_HALL_WALL_MARGIN = BLOCK_SIZE * 0.02f;
     private static final int REACTOR_HALL_STAIRS_STEPS = 14;
-    private static final float REACTOR_HALL_STAIRS_WIDTH = BLOCK_SIZE * 1.6f;
+    private static final float REACTOR_HALL_STAIRS_WIDTH = BLOCK_SIZE * 3f;
     private static final float REACTOR_HALL_STAIRS_RUN = BLOCK_SIZE * 0.85f;
-    private static final float REACTOR_HALL_STAIRS_BASE_X = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS - 5) * BLOCK_SIZE;
-    private static final float REACTOR_HALL_STAIRS_BASE_Z = (REACTOR_HALL_DEPTH_BLOCKS - (REACTOR_HALL_CATWALK_WIDTH_BLOCKS * 0.5f)) * BLOCK_SIZE;
+    private static final boolean REACTOR_HALL_STAIRS_RUN_ALONG_X = true;
+    private static final float REACTOR_HALL_STAIRS_DIR_X = -1f; // -X runs toward west wall, +X toward window
+    private static final float REACTOR_HALL_STAIRS_DIR_Z = 1f; // +Z runs toward ELENA, -Z toward corridor wall
+    private static final float REACTOR_HALL_STAIRS_OFFSET_X = -8f * BLOCK_SIZE;
+    private static final float REACTOR_HALL_STAIRS_WALL_Z = REACTOR_HALL_BACK_Z;
+    private static final float REACTOR_HALL_STAIRS_BASE_X = REACTOR_HALL_WINDOW_X
+        - (REACTOR_HALL_STAIRS_WIDTH * 0.5f + BLOCK_SIZE * 0.5f)
+        + REACTOR_HALL_STAIRS_OFFSET_X;
+    private static final float REACTOR_HALL_STAIRS_BASE_Z = REACTOR_HALL_STAIRS_WALL_Z
+        + BLOCK_SIZE * 0.5f + REACTOR_HALL_STAIRS_WIDTH * 0.5f;
     private static final float REACTOR_HALL_STAIRS_BASE_Y = REACTOR_HALL_FLOOR_Y + BLOCK_SIZE * 0.2f;
     private static final float REACTOR_CORE_CENTER_X = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS * 0.5f) * BLOCK_SIZE;
     private static final float REACTOR_CORE_CENTER_Z = 0f;
@@ -197,9 +205,11 @@ public class ChernobylGameCore {
         "soviet_gray_wall",
         "gray_concrete",
         "reactor_floor_metal",
+        "reactor_step_metal",
         "light_blue_concrete",
         "oak_planks",
-        "fluorescent_light"
+        "fluorescent_light",
+        "glass"
     };
 
     // === STORY SYSTEM ===
@@ -3655,13 +3665,16 @@ public class ChernobylGameCore {
             float blockZ = cameraPos.z / BLOCK_SIZE;
             String gpsText = String.format("GPS  X:%6.2f  Y:%5.2f  Z:%6.2f (blocks)", blockX, blockY, blockZ);
             String zoneText = "Zone: " + describePlayerLocation(cameraPos.x, cameraPos.z);
-            float maxChars = Math.max(gpsText.length(), zoneText.length());
+            String compassDir = getCompassHeading(yaw);
+            String compassText = "Compass: " + compassDir + " | N=ELENA (+Z) E=+X";
+            float maxChars = Math.max(gpsText.length(), Math.max(zoneText.length(), compassText.length()));
             float gpsW = Math.max(320f, maxChars * 8f + 30f);
             float gpsX = 10f;
-            float gpsY = screenH - 110f;
-            drawHUDRect(gpsX, gpsY, gpsW, 55f, 0f, 0f, 0f, 0.55f);
-            drawHUDText(gpsText, gpsX + 14f, gpsY + 34f, 2, 0.6f, 0.9f, 1f, 1f);
-            drawHUDText(zoneText, gpsX + 14f, gpsY + 12f, 2, 0.9f, 0.75f, 0.3f, 0.95f);
+            float gpsY = screenH - 130f;
+            drawHUDRect(gpsX, gpsY, gpsW, 75f, 0f, 0f, 0f, 0.55f);
+            drawHUDText(gpsText, gpsX + 14f, gpsY + 54f, 2, 0.6f, 0.9f, 1f, 1f);
+            drawHUDText(zoneText, gpsX + 14f, gpsY + 32f, 2, 0.9f, 0.75f, 0.3f, 0.95f);
+            drawHUDText(compassText, gpsX + 14f, gpsY + 12f, 2, 0.7f, 0.9f, 0.7f, 0.95f);
         }
 
         // Top center: Current objective
@@ -3956,9 +3969,6 @@ public class ChernobylGameCore {
         float BS = BLOCK_SIZE;
         float hallEntranceZWorld = -REACTOR_HALL_DEPTH_BLOCKS * BS;
         float hallPositiveZWorld = REACTOR_HALL_DEPTH_BLOCKS * BS;
-        if (pz >= CORRIDOR_START_Z) {
-            return "Control Room";
-        }
         if (px <= PUMP_ANNEX_MAX_X && px >= PUMP_ANNEX_MIN_X && pz >= PUMP_ANNEX_MIN_Z && pz <= PUMP_ANNEX_MAX_Z) {
             return "Pump Annex";
         }
@@ -3970,6 +3980,9 @@ public class ChernobylGameCore {
         }
         if (px <= -17 * BS && pz >= hallEntranceZWorld && pz <= hallPositiveZWorld) {
             return "Reactor Hall";
+        }
+        if (pz >= CORRIDOR_START_Z) {
+            return "Control Room";
         }
         if (pZInRange(pz, -46, -42) && px >= (CORRIDOR_HALF_WIDTH + BS) && px < PUMP_WALKWAY_INNER_WALL) {
             return "Pump Arm Landing";
@@ -3987,6 +4000,16 @@ public class ChernobylGameCore {
             return "Straight Corridor";
         }
         return "Service Corridor";
+    }
+
+    private String getCompassHeading(float yawDegrees) {
+        float compass = (450f - yawDegrees) % 360f;
+        if (compass < 0f) {
+            compass += 360f;
+        }
+        String[] dirs = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+        int index = (int) Math.round(compass / 45f) % dirs.length;
+        return dirs[index];
     }
 
     private boolean pZInRange(float pz, int maxBlock, int minBlock) {
@@ -8238,7 +8261,7 @@ public class ChernobylGameCore {
                 }
 
                 if (distBlocks <= reactorRadius + 0.5f) {
-                    String blanketTex = (distBlocks > reactorRadius - 1) ? "hazard_stripe" : "reactor_floor_metal";
+                    String blanketTex = "reactor_floor_metal";
                     addTexturedCube(worldX,
                            hallY + BLOCK_SIZE * 0.55f,
                            worldZ,
@@ -8281,47 +8304,50 @@ public class ChernobylGameCore {
                        pz,
                        BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.18f, BLOCK_SIZE * 0.25f, capTexture);
 
-                float speed = 0.4f + capRand.nextFloat() * 1.6f;  // 0.4 to 2.0 Hz
+                float speed = 0.8f + capRand.nextFloat() * 1.2f;  // 0.8 to 2.0 Hz
                 float phase = capRand.nextFloat() * (float)Math.PI * 2;
-                float amplitude = BLOCK_SIZE * 0.04f + capRand.nextFloat() * BLOCK_SIZE * 0.12f;
+                float amplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
                 fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
             }
         }
 
-        // Central graphite stack and control rod drive columns
-        addTexturedCube(reactorCenterX,
-               reactorTopY + BLOCK_SIZE * 0.7f,
-               hallZ,
-               BLOCK_SIZE * 1.4f, BLOCK_SIZE * 1.2f, BLOCK_SIZE * 1.4f, "iron_block");
-        addTexturedCube(reactorCenterX,
-               reactorTopY + BLOCK_SIZE * 1.15f,
-               hallZ,
-               BLOCK_SIZE * 1.8f, BLOCK_SIZE * 0.25f, BLOCK_SIZE * 1.8f, "hazard_stripe");
-        for (int i = 0; i < 4; i++) {
-            double angle = i * Math.PI / 2.0;
-            float dirX = (float)Math.cos(angle);
-            float dirZ = (float)Math.sin(angle);
-            float colX = reactorCenterX + dirX * BLOCK_SIZE * 4.5f;
-            float colZ = hallZ + dirZ * BLOCK_SIZE * 4.5f;
-            addTexturedCube(colX,
-                   reactorTopY + BLOCK_SIZE * 0.9f,
-                   colZ,
-                   BLOCK_SIZE * 0.6f, BLOCK_SIZE * 1.6f, BLOCK_SIZE * 0.6f, "iron_block");
-            addTexturedCube(colX,
-                   reactorTopY + BLOCK_SIZE * 1.5f,
-                   colZ,
-                   BLOCK_SIZE * 0.7f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 0.7f, "reactor_floor_metal");
-        }
+             // Outer ring of gray rods (bigger circle)
+             int outerRingRadius = channelRadius + 3;
+             float outerRingMin = (reactorRadius - 0.2f) * BLOCK_SIZE * 0.8f;
+             float outerRingMax = (reactorRadius + 1.4f) * BLOCK_SIZE * 0.8f;
+             for (int gx = -outerRingRadius; gx <= outerRingRadius; gx++) {
+                 for (int gz = -outerRingRadius; gz <= outerRingRadius; gz++) {
+                  float px = reactorCenterX + gx * channelSpacing;
+                  float pz = hallZ + gz * channelSpacing;
+                  float distToCenter = (float)Math.sqrt(Math.pow(px - reactorCenterX, 2) + Math.pow(pz - hallZ, 2));
+                  if (distToCenter < outerRingMin || distToCenter > outerRingMax) continue;
+
+                  float capY = reactorTopY + BLOCK_SIZE * 0.18f;
+                  TexturedGameObject rodObj = addTexturedCubeAndReturn(px,
+                      capY,
+                      pz,
+                      BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.18f, BLOCK_SIZE * 0.25f, "fuel_cap_gray");
+
+                  float speed = 0.8f + capRand.nextFloat() * 1.2f;  // 0.8 to 2.0 Hz
+                  float phase = capRand.nextFloat() * (float)Math.PI * 2;
+                  float amplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
+                  fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
+                 }
+             }
 
         // Radial coolant pipes crisscrossing the biological shield
         for (int i = 0; i < 4; i++) {
             double angle = (Math.PI / 4.0) + i * (Math.PI / 2.0);
             float dirX = (float)Math.cos(angle);
             float dirZ = (float)Math.sin(angle);
-            addTexturedCube(reactorCenterX + dirX * BLOCK_SIZE * 2.5f,
-                   reactorTopY + BLOCK_SIZE * 0.35f,
-                   hallZ + dirZ * BLOCK_SIZE * 2.5f,
-                   BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 3.5f, "cable_tray");
+             TexturedGameObject pumpRod = addTexturedCubeAndReturn(reactorCenterX + dirX * BLOCK_SIZE * 2.5f,
+                 reactorTopY + BLOCK_SIZE * 0.35f,
+                 hallZ + dirZ * BLOCK_SIZE * 2.5f,
+                 BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 3.5f, "cable_tray");
+             float pumpSpeed = 0.6f + capRand.nextFloat() * 1.2f;
+             float pumpPhase = capRand.nextFloat() * (float)Math.PI * 2;
+             float pumpAmplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
+             fuelRodAnimations.add(new FuelRodAnimation(pumpRod, reactorTopY + BLOCK_SIZE * 0.35f, pumpSpeed, pumpPhase, pumpAmplitude));
         }
 
         // === SAFETY FENCE around reactor ===
@@ -8354,50 +8380,33 @@ public class ChernobylGameCore {
         // === MEZZANINE CATWALK ===
         int catwalkWidth = REACTOR_HALL_CATWALK_WIDTH_BLOCKS;
         for (int x = 0; x < hallWidth; x++) {
-            for (int w = 0; w < catwalkWidth; w++) {
-                float zFront = hallZ + (hallDepth - w) * BLOCK_SIZE;
-                float zBack = hallZ - (hallDepth - w) * BLOCK_SIZE;
-                boolean skipDoorOverhang = (w == catwalkWidth - 1 && x >= 1 && x <= 4);
-                if (!skipDoorOverhang) {
-                    addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY, zFront,
+            int distToWindow = x;
+            int distToFar = hallWidth - 1 - x;
+            for (int z = -hallDepth; z <= hallDepth; z++) {
+                int distToFront = hallDepth - z;
+                int distToBack = hallDepth + z;
+                int minDist = Math.min(Math.min(distToWindow, distToFar), Math.min(distToFront, distToBack));
+                if (minDist < catwalkWidth) {
+                    addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY, hallZ + z * BLOCK_SIZE,
                            BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
                 }
-                addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY, zBack,
-                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
             }
-        }
-        for (int z = -hallDepth + 1; z <= hallDepth - 1; z++) {
-            for (int w = 0; w < catwalkWidth; w++) {
-                addTexturedCube(hallX - w * BLOCK_SIZE, mezzanineY, hallZ + z * BLOCK_SIZE,
-                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
-                addTexturedCube(hallX - (hallWidth - 1 - w) * BLOCK_SIZE, mezzanineY, hallZ + z * BLOCK_SIZE,
-                       BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
-            }
-        }
-
-        // Cover the observation booth notch above the corridor-facing wall
-        float frontZ = hallZ + (hallDepth - (catwalkWidth - 1)) * BLOCK_SIZE;
-        for (int x = 1; x <= 4; x++) {
-            addTexturedCube(hallX - x * BLOCK_SIZE,
-                   mezzanineY,
-                   frontZ,
-                   BLOCK_SIZE, 10, BLOCK_SIZE, "reactor_floor_metal");
         }
 
         // Catwalk railings
         float railingHeight = BLOCK_SIZE * 1.2f;
         for (int x = 0; x < hallWidth; x++) {
-            addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
-                   hallZ + (hallDepth - catwalkWidth + 0.2f) * BLOCK_SIZE,
+                 addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
+                     hallZ + (hallDepth - catwalkWidth + 0.5f) * BLOCK_SIZE,
                    BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
-            addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
-                   hallZ - (hallDepth - catwalkWidth + 0.2f) * BLOCK_SIZE,
+                 addTexturedCube(hallX - x * BLOCK_SIZE, mezzanineY + railingHeight / 2f,
+                     hallZ - (hallDepth - catwalkWidth + 0.5f) * BLOCK_SIZE,
                    BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
         }
         for (int z = -hallDepth; z <= hallDepth; z++) {
-            addTexturedCube(hallX - (catwalkWidth - 0.2f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
+                 addTexturedCube(hallX - (catwalkWidth - 0.5f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
                    BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
-            addTexturedCube(hallX - (hallWidth - catwalkWidth + 0.2f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
+                                 addTexturedCube(hallX - (hallWidth - catwalkWidth + 0.5f) * BLOCK_SIZE, mezzanineY + railingHeight / 2f, hallZ + z * BLOCK_SIZE,
                    BLOCK_SIZE * 0.15f, railingHeight, BLOCK_SIZE * 0.15f, "iron_block");
         }
 
@@ -8408,23 +8417,52 @@ public class ChernobylGameCore {
          float stairBaseX = REACTOR_HALL_STAIRS_BASE_X;
          float stairBaseZ = hallZ + REACTOR_HALL_STAIRS_BASE_Z;
          float stairBaseY = REACTOR_HALL_STAIRS_BASE_Y;
+         float stairDirX = REACTOR_HALL_STAIRS_DIR_X;
+         float stairDirZ = REACTOR_HALL_STAIRS_DIR_Z;
+         boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
+         float outerRailOffset = stairWidth * 0.5f - BLOCK_SIZE * 0.25f;
+         float outerRailSign;
+         if (runAlongX) {
+             float wallZ = Math.abs(stairBaseZ - REACTOR_HALL_BACK_Z) < Math.abs(stairBaseZ - REACTOR_HALL_FRONT_Z)
+                 ? REACTOR_HALL_BACK_Z : REACTOR_HALL_FRONT_Z;
+             outerRailSign = stairBaseZ > wallZ ? 1f : -1f;
+         } else {
+             float wallX = Math.abs(stairBaseX - REACTOR_HALL_WINDOW_X) < Math.abs(stairBaseX - REACTOR_HALL_FAR_X)
+                 ? REACTOR_HALL_WINDOW_X : REACTOR_HALL_FAR_X;
+             outerRailSign = stairBaseX > wallX ? 1f : -1f;
+         }
          float stepRise = (mezzanineY - stairBaseY) / totalSteps;
          for (int step = 0; step < totalSteps; step++) {
              float centerY = stairBaseY + stepRise * (step + 0.5f);
-             float centerZ = stairBaseZ - stairRun * step;
-             addTexturedCube(stairBaseX, centerY, centerZ,
-                 stairWidth, stepRise * 0.95f, stairRun * 0.95f, "reactor_floor_metal");
+             float centerX = runAlongX ? (stairBaseX + stairRun * step * stairDirX) : stairBaseX;
+             float centerZ = runAlongX ? stairBaseZ : (stairBaseZ + stairRun * step * stairDirZ);
+             float stepSizeX = runAlongX ? (stairRun * 0.95f) : stairWidth;
+             float stepSizeZ = runAlongX ? stairWidth : (stairRun * 0.95f);
+             addTexturedCube(centerX, centerY, centerZ,
+                 stepSizeX, stepRise * 0.95f, stepSizeZ, "reactor_floor_metal");
 
-             for (int side = -1; side <= 1; side += 2) {
-              float railX = stairBaseX + side * (stairWidth / 2f - BLOCK_SIZE * 0.25f);
-              addTexturedCube(railX, centerY + stepRise * 0.2f, centerZ,
-                  BLOCK_SIZE * 0.12f, stepRise + BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.12f, "iron_block");
+             float railX = centerX;
+             float railZ = centerZ;
+             if (runAlongX) {
+                 railZ = stairBaseZ + outerRailSign * outerRailOffset;
+             } else {
+                 railX = stairBaseX + outerRailSign * outerRailOffset;
              }
+             addTexturedCube(railX, centerY + stepRise * 0.2f, railZ,
+                 BLOCK_SIZE * 0.12f, stepRise + BLOCK_SIZE * 0.4f, BLOCK_SIZE * 0.12f, "iron_block");
          }
-         addTexturedCube(stairBaseX,
+         float landingX = runAlongX
+             ? stairBaseX + stairRun * totalSteps * stairDirX + BLOCK_SIZE * 0.5f * stairDirX
+             : stairBaseX;
+         float landingZ = runAlongX
+             ? stairBaseZ
+             : stairBaseZ + stairRun * totalSteps * stairDirZ + BLOCK_SIZE * 0.5f * stairDirZ;
+         float landingSizeX = runAlongX ? (BLOCK_SIZE * 1.6f) : stairWidth;
+         float landingSizeZ = runAlongX ? stairWidth : (BLOCK_SIZE * 1.6f);
+         addTexturedCube(landingX,
              mezzanineY + BLOCK_SIZE * 0.05f,
-             stairBaseZ - stairRun * totalSteps - BLOCK_SIZE * 0.5f,
-             stairWidth, 10, BLOCK_SIZE * 1.6f, "reactor_floor_metal");
+             landingZ,
+             landingSizeX, 10, landingSizeZ, "reactor_floor_metal");
 
         // === REACTOR HALL WALLS (extra tall) ===
         for (int z = -hallDepth; z <= hallDepth; z++) {
@@ -8436,6 +8474,20 @@ public class ChernobylGameCore {
                     && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
                 String wallTexture = overlapsControlRoomView ? "glass" : "reactor_wall_white";
                 addTexturedCube(hallX - hallWidth * BLOCK_SIZE, blockCenterY, hallZ + z * BLOCK_SIZE,
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
+            }
+        }
+
+        // Window-side wall (toward control room) so the boundary is visible from the hall floor
+        for (int z = -hallDepth; z <= hallDepth; z++) {
+            for (int h = 0; h < tallHallHeight; h++) {
+                float blockCenterY = hallY + h * BLOCK_SIZE;
+                float blockBottom = blockCenterY - BLOCK_SIZE * 0.5f;
+                float blockTop = blockBottom + BLOCK_SIZE;
+                boolean overlapsControlRoomView = (blockTop > CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y
+                    && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
+                String wallTexture = overlapsControlRoomView ? "glass" : "reactor_wall_white";
+                addTexturedCube(hallX, blockCenterY, hallZ + z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
             }
         }
@@ -11323,6 +11375,30 @@ public class ChernobylGameCore {
     // Reactor hall mezzanine helpers keep rendering + physics in sync
     private float getReactorHallStairGround(float px, float pz) {
         float halfWidth = REACTOR_HALL_STAIRS_WIDTH / 2f + BLOCK_SIZE * 0.3f;
+        float totalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+        boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
+        if (runAlongX) {
+            float minZ = REACTOR_HALL_STAIRS_BASE_Z - halfWidth;
+            float maxZ = REACTOR_HALL_STAIRS_BASE_Z + halfWidth;
+            if (pz < minZ || pz > maxZ) {
+                return Float.NaN;
+            }
+
+            float topX = REACTOR_HALL_STAIRS_BASE_X;
+            float bottomX = topX + REACTOR_HALL_STAIRS_DIR_X * totalRun;
+            float minX = Math.min(topX, bottomX) - BLOCK_SIZE * 0.4f;
+            float maxX = Math.max(topX, bottomX) + BLOCK_SIZE * 0.4f;
+            if (px < minX || px > maxX) {
+                return Float.NaN;
+            }
+
+            float signedRun = REACTOR_HALL_STAIRS_DIR_X * totalRun;
+            float progress = signedRun != 0f ? (px - topX) / signedRun : 0f;
+            progress = Math.max(0f, Math.min(1f, progress));
+            float stairY = REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
+            return GROUND_LEVEL + stairY;
+        }
+
         float minX = REACTOR_HALL_STAIRS_BASE_X - halfWidth;
         float maxX = REACTOR_HALL_STAIRS_BASE_X + halfWidth;
         if (px < minX || px > maxX) {
@@ -11330,15 +11406,15 @@ public class ChernobylGameCore {
         }
 
         float topZ = REACTOR_HALL_STAIRS_BASE_Z;
-        float bottomZ = topZ - REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+        float bottomZ = topZ + REACTOR_HALL_STAIRS_DIR_Z * totalRun;
         float minZ = Math.min(topZ, bottomZ) - BLOCK_SIZE * 0.4f;
         float maxZ = Math.max(topZ, bottomZ) + BLOCK_SIZE * 0.4f;
         if (pz < minZ || pz > maxZ) {
             return Float.NaN;
         }
 
-        float totalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
-        float progress = (topZ - pz) / totalRun;
+        float signedRun = REACTOR_HALL_STAIRS_DIR_Z * totalRun;
+        float progress = signedRun != 0f ? (pz - topZ) / signedRun : 0f;
         progress = Math.max(0f, Math.min(1f, progress));
         float stairY = REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
         return GROUND_LEVEL + stairY;
@@ -11364,9 +11440,43 @@ public class ChernobylGameCore {
         boolean alongFar = px <= REACTOR_HALL_FAR_X + band;
 
         if (alongFront || alongBack || alongWindow || alongFar) {
+            if (isCatwalkTileRemoved(px, pz)) {
+                return Float.NaN;
+            }
+            return mezzanineWorld;
+        }
+
+        boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
+        float landingHalfDepth = BLOCK_SIZE * 0.8f;
+        float landingHalfWidth = REACTOR_HALL_STAIRS_WIDTH * 0.5f;
+        float connectorHalfWidth = landingHalfWidth + BLOCK_SIZE * 0.6f;
+        boolean aboveStairLanding;
+        if (runAlongX) {
+            float landingCenterX = REACTOR_HALL_STAIRS_BASE_X
+                + REACTOR_HALL_STAIRS_DIR_X * (REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS + BLOCK_SIZE * 0.5f);
+            aboveStairLanding = Math.abs(px - landingCenterX) <= landingHalfDepth
+                && Math.abs(pz - REACTOR_HALL_STAIRS_BASE_Z) <= connectorHalfWidth;
+        } else {
+            float landingCenterZ = REACTOR_HALL_STAIRS_BASE_Z
+                + REACTOR_HALL_STAIRS_DIR_Z * (REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS + BLOCK_SIZE * 0.5f);
+            aboveStairLanding = Math.abs(px - REACTOR_HALL_STAIRS_BASE_X) <= connectorHalfWidth
+                && Math.abs(pz - landingCenterZ) <= landingHalfDepth;
+        }
+        if (aboveStairLanding) {
+            if (isCatwalkTileRemoved(px, pz)) {
+                return Float.NaN;
+            }
             return mezzanineWorld;
         }
         return Float.NaN;
+    }
+
+    private boolean isCatwalkTileRemoved(float px, float pz) {
+        float tileX = Math.round(px / BLOCK_SIZE) * BLOCK_SIZE;
+        float tileZ = Math.round(pz / BLOCK_SIZE) * BLOCK_SIZE;
+        Vector3f pos = new Vector3f(tileX, REACTOR_HALL_MEZZANINE_Y, tileZ);
+        Vector3f scale = new Vector3f(BLOCK_SIZE, 10f, BLOCK_SIZE);
+        return removalExists(pos, scale);
     }
     
     // Collision detection - returns true if position collides with walls or objects
@@ -11374,6 +11484,42 @@ public class ChernobylGameCore {
     private boolean checkCollision(float x, float y, float z) {
         float PR = PLAYER_RADIUS;
         float BS = BLOCK_SIZE;
+        float playerBottom = y - PLAYER_HEIGHT * 0.5f;
+        float playerTop = y + PLAYER_HEIGHT * 0.5f;
+
+        float hallMaxX = REACTOR_HALL_WINDOW_X + REACTOR_HALL_WALL_MARGIN;
+        float hallMinX = REACTOR_HALL_FAR_X - REACTOR_HALL_WALL_MARGIN;
+        float hallMaxZ = REACTOR_HALL_FRONT_Z - REACTOR_HALL_WALL_MARGIN;
+        float hallMinZ = REACTOR_HALL_BACK_Z + REACTOR_HALL_WALL_MARGIN;
+
+        float catwalkRailBottom = GROUND_LEVEL + REACTOR_HALL_MEZZANINE_Y - BLOCK_SIZE * 0.6f;
+        float catwalkRailTop = GROUND_LEVEL + REACTOR_HALL_MEZZANINE_Y + BLOCK_SIZE * 1.4f;
+        if (playerTop > catwalkRailBottom && playerBottom < catwalkRailTop) {
+            float catwalkRailThickness = BLOCK_SIZE * 0.12f;
+            float railPerpCheck = catwalkRailThickness + PR;
+            float edgeOffset = (REACTOR_HALL_CATWALK_WIDTH_BLOCKS - 0.5f) * BLOCK_SIZE;
+            float frontRailZ = REACTOR_HALL_FRONT_Z - edgeOffset;
+            float backRailZ = REACTOR_HALL_BACK_Z + edgeOffset;
+            float nearRailX = REACTOR_HALL_WINDOW_X - edgeOffset;
+            float farRailX = REACTOR_HALL_WINDOW_X - (REACTOR_HALL_WIDTH_BLOCKS - REACTOR_HALL_CATWALK_WIDTH_BLOCKS + 0.5f) * BLOCK_SIZE;
+
+            float cornerGap = BLOCK_SIZE * 1.0f;
+            float minRailX = Math.min(nearRailX, farRailX);
+            float maxRailX = Math.max(nearRailX, farRailX);
+            float minRailZ = Math.min(backRailZ, frontRailZ);
+            float maxRailZ = Math.max(backRailZ, frontRailZ);
+            boolean inXCornerGap = x <= minRailX + cornerGap || x >= maxRailX - cornerGap;
+            boolean inZCornerGap = z <= minRailZ + cornerGap || z >= maxRailZ - cornerGap;
+
+            if (Math.abs(z - frontRailZ) < railPerpCheck && x >= hallMinX && x <= hallMaxX
+                && !inXCornerGap) return true;
+            if (Math.abs(z - backRailZ) < railPerpCheck && x >= hallMinX && x <= hallMaxX
+                && !inXCornerGap) return true;
+            if (Math.abs(x - nearRailX) < railPerpCheck && z >= hallMinZ && z <= hallMaxZ
+                && !inZCornerGap) return true;
+            if (Math.abs(x - farRailX) < railPerpCheck && z >= hallMinZ && z <= hallMaxZ
+                && !inZCornerGap) return true;
+        }
 
         // Zone detection — check specific lower-level zones FIRST
         float hallEntranceZWorld = -REACTOR_HALL_DEPTH_BLOCKS * BS;
@@ -11415,11 +11561,10 @@ public class ChernobylGameCore {
 
         } else if (inWalkway) {
             // ============= WALKWAY (x=-17 to -21, z=-46 to -12) =============
-            if (x - PR < (WALKWAY_X_MIN - BS)) return true;  // Outer railing always solid
+            float walkwayOuterBarrierEndZ = -30f * BS; // past this, the walkway merges into the hall so let players step off
+            if (z < walkwayOuterBarrierEndZ && x - PR < (WALKWAY_X_MIN - BS)) return true;  // Outer railing stays solid only before the hall transition
             if (z - PR < -46 * BS) return true;  // Far wall
-            // Right wall only exists from z=-42 to z=-12 (the long stretch)
-            // At z=-42 to z=-46, the right side is OPEN (connects to the landing/left arm)
-            if (z >= -42 * BS && z < PUMP_ANNEX_MIN_Z && x + PR > REACTOR_HALL_WINDOW_X) return true;
+            // Right side is now left completely open so players can hug the wall directly into the hall/stairs
             // z > -12*BS: open to reactor hall (no near wall)
 
         } else if (inPumpWalkway) {
@@ -11435,13 +11580,9 @@ public class ChernobylGameCore {
 
         } else if (inReactorHall) {
             // ============= GLASS DOME REACTOR HALL =============
-            float hallMaxX = REACTOR_HALL_WINDOW_X + REACTOR_HALL_WALL_MARGIN;
-            float hallMinX = REACTOR_HALL_FAR_X - REACTOR_HALL_WALL_MARGIN;
             if (x + PR > hallMaxX) return true;
             if (x - PR < hallMinX) return true;
 
-            float hallMaxZ = REACTOR_HALL_FRONT_Z - REACTOR_HALL_WALL_MARGIN;
-            float hallMinZ = REACTOR_HALL_BACK_Z + REACTOR_HALL_WALL_MARGIN;
             if (z + PR > hallMaxZ) return true;
 
             float walkwayDoorMinX = WALKWAY_X_MIN - BLOCK_SIZE;
@@ -11449,10 +11590,63 @@ public class ChernobylGameCore {
             boolean inWalkwayDoor = (x + PR > walkwayDoorMinX && x - PR < walkwayDoorMaxX);
             if (z - PR < hallMinZ && !inWalkwayDoor) return true;
 
-            float dxFence = Math.abs(x - REACTOR_CORE_CENTER_X) - PR;
-            float dzFence = Math.abs(z - REACTOR_CORE_CENTER_Z) - PR;
-            float fenceHalf = REACTOR_FENCE_RADIUS - REACTOR_FENCE_MARGIN;
-            if (dxFence < fenceHalf && dzFence < fenceHalf) return true;
+            float fenceBottom = GROUND_LEVEL + REACTOR_HALL_FLOOR_Y;
+            float fenceTop = fenceBottom + BLOCK_SIZE * 1.8f;
+            float fencePlayerBottom = playerBottom;
+            float fencePlayerTop = playerTop;
+            if (fencePlayerTop > fenceBottom && fencePlayerBottom < fenceTop) {
+                float fenceRadius = REACTOR_FENCE_RADIUS - REACTOR_FENCE_MARGIN;
+                float railThickness = BLOCK_SIZE * 0.12f;
+                float railPerpCheck = railThickness + PR;
+                float fenceHalfLength = fenceRadius + railThickness;
+
+                float northRailZ = REACTOR_CORE_CENTER_Z + fenceRadius;
+                float southRailZ = REACTOR_CORE_CENTER_Z - fenceRadius;
+                if (Math.abs(z - northRailZ) < railPerpCheck && Math.abs(x - REACTOR_CORE_CENTER_X) < fenceHalfLength) return true;
+                if (Math.abs(z - southRailZ) < railPerpCheck && Math.abs(x - REACTOR_CORE_CENTER_X) < fenceHalfLength) return true;
+
+                float eastRailX = REACTOR_CORE_CENTER_X + fenceRadius;
+                float westRailX = REACTOR_CORE_CENTER_X - fenceRadius;
+                if (Math.abs(x - eastRailX) < railPerpCheck && Math.abs(z - REACTOR_CORE_CENTER_Z) < fenceHalfLength) return true;
+                if (Math.abs(x - westRailX) < railPerpCheck && Math.abs(z - REACTOR_CORE_CENTER_Z) < fenceHalfLength) return true;
+
+                float postHalf = BLOCK_SIZE * 0.14f + PR;
+                if (Math.abs(x - eastRailX) < postHalf && Math.abs(z - northRailZ) < postHalf) return true;
+                if (Math.abs(x - eastRailX) < postHalf && Math.abs(z - southRailZ) < postHalf) return true;
+                if (Math.abs(x - westRailX) < postHalf && Math.abs(z - northRailZ) < postHalf) return true;
+                if (Math.abs(x - westRailX) < postHalf && Math.abs(z - southRailZ) < postHalf) return true;
+            }
+
+            float stairRailBottom = GROUND_LEVEL + REACTOR_HALL_STAIRS_BASE_Y - BLOCK_SIZE * 0.3f;
+            float stairRailTop = GROUND_LEVEL + REACTOR_HALL_MEZZANINE_Y + BLOCK_SIZE * 0.3f;
+            if (playerTop > stairRailBottom && playerBottom < stairRailTop) {
+                float stairRailThickness = BLOCK_SIZE * 0.12f;
+                float stairRailHalf = stairRailThickness + Math.max(0f, PR - BLOCK_SIZE * 0.6f);
+                float stairTotalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+                float outerRailOffset = REACTOR_HALL_STAIRS_WIDTH * 0.5f - BLOCK_SIZE * 0.25f;
+                boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
+                if (runAlongX) {
+                    float topX = REACTOR_HALL_STAIRS_BASE_X;
+                    float bottomX = topX + REACTOR_HALL_STAIRS_DIR_X * stairTotalRun;
+                    float minX = Math.min(topX, bottomX) - BLOCK_SIZE * 0.4f;
+                    float maxX = Math.max(topX, bottomX) + BLOCK_SIZE * 0.4f;
+                    float wallZ = Math.abs(REACTOR_HALL_STAIRS_BASE_Z - REACTOR_HALL_BACK_Z) < Math.abs(REACTOR_HALL_STAIRS_BASE_Z - REACTOR_HALL_FRONT_Z)
+                        ? REACTOR_HALL_BACK_Z : REACTOR_HALL_FRONT_Z;
+                    float outerRailSign = REACTOR_HALL_STAIRS_BASE_Z > wallZ ? 1f : -1f;
+                    float railZ = REACTOR_HALL_STAIRS_BASE_Z + outerRailSign * outerRailOffset;
+                    if (x >= minX && x <= maxX && Math.abs(z - railZ) < stairRailHalf) return true;
+                } else {
+                    float topZ = REACTOR_HALL_STAIRS_BASE_Z;
+                    float bottomZ = topZ + REACTOR_HALL_STAIRS_DIR_Z * stairTotalRun;
+                    float minZ = Math.min(topZ, bottomZ) - BLOCK_SIZE * 0.4f;
+                    float maxZ = Math.max(topZ, bottomZ) + BLOCK_SIZE * 0.4f;
+                    float wallX = Math.abs(REACTOR_HALL_STAIRS_BASE_X - REACTOR_HALL_WINDOW_X) < Math.abs(REACTOR_HALL_STAIRS_BASE_X - REACTOR_HALL_FAR_X)
+                        ? REACTOR_HALL_WINDOW_X : REACTOR_HALL_FAR_X;
+                    float outerRailSign = REACTOR_HALL_STAIRS_BASE_X > wallX ? 1f : -1f;
+                    float railX = REACTOR_HALL_STAIRS_BASE_X + outerRailSign * outerRailOffset;
+                    if (z >= minZ && z <= maxZ && Math.abs(x - railX) < stairRailHalf) return true;
+                }
+            }
 
         } else if (inControlRoom) {
             // ============= CONTROL ROOM =============
