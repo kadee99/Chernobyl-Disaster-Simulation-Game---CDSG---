@@ -96,6 +96,16 @@ public class ChernobylGameCore {
     private static final float THIRD_PERSON_DISTANCE = 250f;
     private static final float THIRD_PERSON_HEIGHT = 80f;
 
+    // Hotbar UI
+    private int hotbarSelectedSlot = 0;
+    private static final String[] HOTBAR_ITEMS = {
+        "HAND", "RADIO", "", "", "", "", "", "", ""
+    };
+    // Set to true for items that should show the first-person hand/item overlay.
+    private static final boolean[] HOTBAR_RENDERABLE = {
+        false, true, false, false, false, false, false, false, false
+    };
+
     // Walk animation
     private float walkAnimPhase = 0f;
     private boolean isPlayerWalking = false;
@@ -120,7 +130,7 @@ public class ChernobylGameCore {
     
     // Collision constants
     private static final float PLAYER_RADIUS = 30f;  // Player collision radius
-    private static final float PLAYER_HEIGHT = 80f;  // Player eye height
+    private static final float PLAYER_HEIGHT = 92f;  // Player eye height
     private static final float ROOM_WIDTH = 16 * BLOCK_SIZE;  // X boundaries
     private static final float ROOM_DEPTH = 12 * BLOCK_SIZE;  // Z boundaries
     private static final float ROOM_FLOOR = 20f;               // Minimum Y (above floor)
@@ -134,6 +144,137 @@ public class ChernobylGameCore {
     private static final float CORRIDOR_STRAIGHT_END_Z = -34 * BLOCK_SIZE; // End of flat straight section
     private static final float CORRIDOR_HALF_WIDTH = 2 * BLOCK_SIZE; // Corridor is 4 blocks wide
     private static final int CORRIDOR_WALL_H = 6; // Corridor wall height in blocks
+    
+    private void renderHotbarOverlay(float screenW, float screenH) {
+        float barW = 396f;
+        float barH = 62f;
+        float barX = (screenW - barW) / 2f;
+        float barY = 18f;
+        float slotGap = 6f;
+        float slotW = (barW - slotGap * 8f) / 9f;
+        float slotH = 48f;
+
+        drawHUDRect(barX - 10f, barY - 8f, barW + 20f, barH + 14f, 0f, 0f, 0f, 0.35f);
+        for (int i = 0; i < 9; i++) {
+            float slotX = barX + i * (slotW + slotGap);
+            boolean selected = (i == hotbarSelectedSlot);
+            float bgA = selected ? 0.72f : 0.42f;
+            float borderA = selected ? 1f : 0.55f;
+            float borderR = selected ? 0.9f : 0.55f;
+            float borderG = selected ? 0.7f : 0.35f;
+            float borderB = selected ? 0.2f : 0.12f;
+
+            drawHUDRect(slotX, barY, slotW, slotH, 0.08f, 0.08f, 0.08f, bgA);
+            drawHUDRect(slotX, barY + slotH - 2f, slotW, 2f, borderR, borderG, borderB, borderA);
+            drawHUDRect(slotX, barY, slotW, 2f, 0.15f, 0.15f, 0.15f, borderA);
+            drawHUDRect(slotX, barY, 2f, slotH, 0.15f, 0.15f, 0.15f, borderA);
+            drawHUDRect(slotX + slotW - 2f, barY, 2f, slotH, 0.15f, 0.15f, 0.15f, borderA);
+
+            drawHotbarItemIcon(HOTBAR_ITEMS[i], slotX, barY, slotW, slotH, selected);
+
+            drawHUDText(String.valueOf(i + 1), slotX + 6f, barY + 5f, 2, 0.7f, 0.7f, 0.7f, selected ? 1f : 0.65f);
+            String itemName = HOTBAR_ITEMS[i];
+            if (itemName != null && !itemName.isEmpty()) {
+                float itemTextW = itemName.length() * 5f; // scale 1: ~4px glyph + 1px spacing
+                float itemX = slotX + (slotW - itemTextW) * 0.5f;
+                drawHUDText(itemName, itemX, barY + 33f, 1, 0.92f, 0.9f, 0.85f, selected ? 1f : 0.8f);
+            }
+        }
+
+        if (hotbarSelectedSlot >= 0
+                && hotbarSelectedSlot < HOTBAR_ITEMS.length
+                && "RADIO".equals(HOTBAR_ITEMS[hotbarSelectedSlot])) {
+            String station = "NOW PLAYING: " + getCurrentTrackLabel();
+            float stationW = station.length() * 10 + 26;
+            float stationX = (screenW - stationW) * 0.5f;
+            float stationY = barY + barH + 8f;
+            drawHUDRect(stationX, stationY, stationW, 22f, 0.05f, 0.05f, 0.05f, 0.72f);
+            drawHUDText(station, stationX + 13f, stationY + 7f, 2, 0.85f, 0.95f, 0.82f, 0.95f);
+        }
+    }
+
+    private void drawHotbarItemIcon(String itemName, float slotX, float slotY, float slotW, float slotH, boolean selected) {
+        if (itemName == null || itemName.isEmpty()) return;
+
+        float alpha = selected ? 1f : 0.8f;
+        float iconX = slotX + slotW * 0.5f;
+        float iconY = slotY + slotH * 0.58f;
+
+        if ("HAND".equals(itemName)) {
+            float palmW = slotW * 0.28f;
+            float palmH = slotH * 0.23f;
+            float cuffW = slotW * 0.33f;
+            float cuffH = slotH * 0.12f;
+
+            drawHUDRect(iconX - cuffW * 0.5f, iconY - cuffH - palmH * 0.65f, cuffW, cuffH, 0.25f, 0.36f, 0.65f, alpha);
+            drawHUDRect(iconX - palmW * 0.5f, iconY - palmH * 0.5f, palmW, palmH, 0.88f, 0.72f, 0.60f, alpha);
+            drawHUDRect(iconX + palmW * 0.42f, iconY - palmH * 0.15f, palmW * 0.32f, palmH * 0.55f, 0.84f, 0.68f, 0.56f, alpha);
+        } else if ("RADIO".equals(itemName)) {
+            float bodyW = slotW * 0.34f;
+            float bodyH = slotH * 0.30f;
+            float bodyX = iconX - bodyW * 0.5f;
+            float bodyY = iconY - bodyH * 0.45f;
+
+            drawHUDRect(bodyX, bodyY, bodyW, bodyH, 0.20f, 0.21f, 0.24f, alpha);
+            drawHUDRect(bodyX + bodyW * 0.15f, bodyY + bodyH * 0.58f, bodyW * 0.70f, bodyH * 0.24f, 0.2f, 0.55f, 0.3f, alpha);
+            drawHUDRect(bodyX + bodyW * 0.12f, bodyY + bodyH * 0.16f, bodyW * 0.22f, bodyH * 0.24f, 0.5f, 0.5f, 0.5f, alpha);
+            drawHUDRect(bodyX + bodyW * 0.42f, bodyY + bodyH * 0.16f, bodyW * 0.12f, bodyH * 0.12f, 0.75f, 0.5f, 0.2f, alpha);
+            drawHUDRect(bodyX + bodyW * 0.74f, bodyY + bodyH * 0.95f, bodyW * 0.08f, bodyH * 0.45f, 0.45f, 0.45f, 0.45f, alpha);
+        }
+    }
+
+    private boolean shouldRenderFirstPersonHand() {
+        if (hotbarSelectedSlot < 0 || hotbarSelectedSlot >= HOTBAR_RENDERABLE.length) {
+            return false;
+        }
+        return HOTBAR_RENDERABLE[hotbarSelectedSlot];
+    }
+    
+    private void renderFirstPersonHand() {
+        if (playerRightArm == null || thirdPerson) return;
+
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_DEPTH_TEST);
+        glUniform1i(useTextureLoc, 1);
+        glUniform1i(fullBrightLoc, 1);
+
+        Matrix4f handProjection = new Matrix4f().ortho(-1f, 1f, -1f, 1f, -1f, 1f);
+        Matrix4f handView = new Matrix4f();
+        float sway = (float)Math.sin(walkAnimPhase) * 0.04f;
+        float bob = (float)Math.abs(Math.sin(walkAnimPhase * 0.5f)) * 0.03f;
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            FloatBuffer fb = stack.mallocFloat(16);
+            glUniformMatrix4fv(viewLoc, false, handView.get(fb));
+            glUniformMatrix4fv(projectionLoc, false, handProjection.get(fb));
+
+            model.identity()
+                .translate(0.80f, -0.94f + bob, -0.15f)
+                .rotateZ(0.06f + sway)
+                .rotateX((float)Math.PI)
+                .rotateY(0.14f)
+                .scale(0.34f, 0.57f, 0.34f);
+            glUniformMatrix4fv(modelLoc, false, model.get(fb));
+            glBindTexture(GL_TEXTURE_2D, playerRightArm.textureId);
+            playerRightArm.mesh.render();
+
+            if (hotbarSelectedSlot >= 0 && hotbarSelectedSlot < HOTBAR_ITEMS.length
+                    && "RADIO".equals(HOTBAR_ITEMS[hotbarSelectedSlot])) {
+                Integer radioTex = blockTextures.get("radio_item");
+                if (radioTex != null) {
+                    model.identity()
+                        .translate(0.58f, -0.72f + bob, -0.14f)
+                        .rotateZ(0.04f + sway * 0.6f)
+                        .rotateX((float)Math.PI)
+                        .rotateY(0.08f)
+                        .scale(0.22f, 0.16f, 0.09f);
+                    glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                    glBindTexture(GL_TEXTURE_2D, radioTex);
+                    texturedCubeMesh.render();
+                }
+            }
+        }
+    }
     // Stairs section: z from -34 to -42, descending from y=0 to y=-180
     private static final float STAIR_START_Z = -34 * BLOCK_SIZE;
     private static final float STAIR_END_Z = -42 * BLOCK_SIZE;
@@ -389,7 +530,7 @@ public class ChernobylGameCore {
     // === PAUSE MENU ===
     private boolean pauseMenuOpen = false;
     private boolean mKeyPressed = false;
-    private int pauseMenuHovered = -1; // 0=Resume, 1=Quit to Title
+    private int pauseMenuHovered = -1; // 0=Resume, 1=Settings, 2=Quit to Title
     private float pauseMenuTime = 0f;
 
     // === ENDING STATE ===
@@ -420,6 +561,7 @@ public class ChernobylGameCore {
 
     // Settings menu
     private int settingsTab = 0; // 0=Audio, 1=Controls, 2=Gameplay, 3=Controller
+    private boolean settingsOpenedFromPause = false;
     private boolean settingsClickHeld = false;
     private int settingsDragTarget = -1; // 0=music, 1=sfx
     private boolean musicEnabled = true;
@@ -480,6 +622,12 @@ public class ChernobylGameCore {
     private int sfxUiSource = 0;
     private int sfxTypeSource = 0;
     private int sfxTalkSource = 0;
+    private List<Path> musicPlaylist = new ArrayList<>();
+    private int currentMusicIndex = -1;
+    private boolean radioNextTrackPressed = false;
+    private boolean radioPrevTrackPressed = false;
+    private boolean radioStopPressed = false;
+    private int previousHotbarSlot = -1;
     private final Random sfxRng = new Random(9021);
     private boolean audioInitialized = false;
 
@@ -546,51 +694,87 @@ public class ChernobylGameCore {
 
             initSfx();
 
-            // Try to load OGG file from project folder
-            // First try music.ogg, then any .ogg file in the directory
-            Path musicPath = Paths.get("music.ogg");
-            if (!Files.exists(musicPath)) {
-                musicPath = Paths.get(System.getProperty("user.dir"), "music.ogg");
-            }
-            if (!Files.exists(musicPath)) {
-                // Search for any .ogg file in the project folder
-                Path projectDir = Paths.get(System.getProperty("user.dir"));
-                try (java.util.stream.Stream<Path> files = Files.list(projectDir)) {
-                    musicPath = files
-                        .filter(p -> p.toString().toLowerCase().endsWith(".ogg"))
-                        .findFirst()
-                        .orElse(null);
-                } catch (Exception ex) {
-                    musicPath = null;
-                }
-            }
-            if (musicPath == null || !Files.exists(musicPath)) {
-                System.out.println("[AUDIO] No music.ogg found - place music.ogg in project folder for background music");
-                audioInitialized = true; // context is fine, just no music
-                applyAudioSettings();
-                return;
-            }
+            musicSource = alGenSources();
+            alSourcei(musicSource, AL_LOOPING, AL_TRUE);
+            alSourcef(musicSource, AL_GAIN, musicVolume);
 
-            System.out.println("[AUDIO] Loading " + musicPath.toAbsolutePath());
-
-            // Read the entire file into a ByteBuffer
-            byte[] fileBytes = Files.readAllBytes(musicPath);
-            ByteBuffer fileBuffer = MemoryUtil.memAlloc(fileBytes.length);
-            fileBuffer.put(fileBytes).flip();
-
-            // Decode OGG Vorbis
-            int[] errorOut = new int[1];
-            long decoder = stb_vorbis_open_memory(fileBuffer, errorOut, null);
-            if (decoder == 0) {
-                System.err.println("[AUDIO] Failed to decode music.ogg (error: " + errorOut[0] + ")");
-                MemoryUtil.memFree(fileBuffer);
+            refreshMusicPlaylist();
+            if (musicPlaylist.isEmpty()) {
+                System.out.println("[AUDIO] No .ogg tracks found in project folder (drop songs next to the game files)");
                 audioInitialized = true;
                 applyAudioSettings();
                 return;
             }
 
-            // Get info
-            int channels, sampleRate, samples;
+            int preferredIndex = 0;
+            int alephIndex = -1;
+            for (int i = 0; i < musicPlaylist.size(); i++) {
+                String fileName = musicPlaylist.get(i).getFileName().toString().toLowerCase(Locale.ROOT);
+                if (fileName.contains("aleph")) {
+                    alephIndex = i;
+                    break;
+                }
+                if ("music.ogg".equals(fileName)) {
+                    preferredIndex = i;
+                }
+            }
+            currentMusicIndex = alephIndex >= 0 ? alephIndex : preferredIndex;
+            loadMusicTrack(currentMusicIndex, true);
+
+            audioInitialized = true;
+            applyAudioSettings();
+
+        } catch (Exception e) {
+            System.err.println("[AUDIO] Error initializing audio: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void refreshMusicPlaylist() {
+        musicPlaylist.clear();
+        Path projectDir = Paths.get(System.getProperty("user.dir"));
+        try (java.util.stream.Stream<Path> files = Files.list(projectDir)) {
+            files
+                .filter(p -> p.toString().toLowerCase(Locale.ROOT).endsWith(".ogg"))
+                .forEach(musicPlaylist::add);
+            musicPlaylist.sort((a, b) -> a.getFileName().toString().compareToIgnoreCase(b.getFileName().toString()));
+        } catch (Exception ex) {
+            musicPlaylist.clear();
+            System.err.println("[AUDIO] Failed to scan playlist: " + ex.getMessage());
+        }
+    }
+
+    private String getCurrentTrackLabel() {
+        if (currentMusicIndex < 0 || currentMusicIndex >= musicPlaylist.size()) {
+            return "NO TRACK";
+        }
+        String name = musicPlaylist.get(currentMusicIndex).getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return (dot > 0 ? name.substring(0, dot) : name).toUpperCase(Locale.ROOT);
+    }
+
+    private boolean loadMusicTrack(int playlistIndex, boolean startup) {
+        if (musicSource == 0 || playlistIndex < 0 || playlistIndex >= musicPlaylist.size()) {
+            return false;
+        }
+
+        Path musicPath = musicPlaylist.get(playlistIndex);
+        try {
+            byte[] fileBytes = Files.readAllBytes(musicPath);
+            ByteBuffer fileBuffer = MemoryUtil.memAlloc(fileBytes.length);
+            fileBuffer.put(fileBytes).flip();
+
+            int[] errorOut = new int[1];
+            long decoder = stb_vorbis_open_memory(fileBuffer, errorOut, null);
+            if (decoder == 0) {
+                MemoryUtil.memFree(fileBuffer);
+                System.err.println("[AUDIO] Failed to decode " + musicPath.getFileName() + " (error: " + errorOut[0] + ")");
+                return false;
+            }
+
+            int channels;
+            int sampleRate;
+            int samples;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 STBVorbisInfo info = STBVorbisInfo.malloc(stack);
                 stb_vorbis_get_info(decoder, info);
@@ -600,34 +784,67 @@ public class ChernobylGameCore {
             samples = stb_vorbis_stream_length_in_samples(decoder);
             int totalSamples = samples * channels;
 
-            // Decode all samples
             ShortBuffer pcmBuffer = MemoryUtil.memAllocShort(totalSamples);
             stb_vorbis_get_samples_short_interleaved(decoder, channels, pcmBuffer);
             stb_vorbis_close(decoder);
             MemoryUtil.memFree(fileBuffer);
 
-            // Create OpenAL buffer
-            musicBuffer = alGenBuffers();
+            int newBuffer = alGenBuffers();
             int format = (channels == 1) ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-            alBufferData(musicBuffer, format, pcmBuffer, sampleRate);
+            alBufferData(newBuffer, format, pcmBuffer, sampleRate);
             MemoryUtil.memFree(pcmBuffer);
 
-            // Create source and set looping
-            musicSource = alGenSources();
+            int oldBuffer = musicBuffer;
+            alSourceStop(musicSource);
+            alSourcei(musicSource, AL_BUFFER, 0);
+            musicBuffer = newBuffer;
             alSourcei(musicSource, AL_BUFFER, musicBuffer);
             alSourcei(musicSource, AL_LOOPING, AL_TRUE);
-            alSourcef(musicSource, AL_GAIN, musicVolume);
+            if (oldBuffer != 0) {
+                alDeleteBuffers(oldBuffer);
+            }
 
-            audioInitialized = true;
-            applyAudioSettings();
+            currentMusicIndex = playlistIndex;
 
-            float duration = (float) samples / sampleRate;
-            System.out.println("[AUDIO] Playing music.ogg (" + String.format("%.1f", duration) + "s, " + channels + "ch, " + sampleRate + "Hz) - LOOPING");
-
-        } catch (Exception e) {
-            System.err.println("[AUDIO] Error initializing audio: " + e.getMessage());
-            e.printStackTrace();
+            float duration = sampleRate > 0 ? (float) samples / sampleRate : 0f;
+            String phase = startup ? "Startup" : "Radio";
+            System.out.println("[AUDIO] " + phase + " track: " + musicPath.getFileName() + " (" + String.format(Locale.US, "%.1f", duration) + "s)");
+            return true;
+        } catch (Exception ex) {
+            System.err.println("[AUDIO] Could not load track " + musicPath.getFileName() + ": " + ex.getMessage());
+            return false;
         }
+    }
+
+    private void switchRadioTrack(int direction) {
+        if (!audioInitialized || musicPlaylist.isEmpty()) {
+            showNotification("RADIO: NO SONGS FOUND");
+            return;
+        }
+        if (musicPlaylist.size() == 1) {
+            showNotification("RADIO: ONLY ONE SONG LOADED");
+            return;
+        }
+
+        int count = musicPlaylist.size();
+        int nextIndex = currentMusicIndex;
+        if (nextIndex < 0 || nextIndex >= count) nextIndex = 0;
+        nextIndex = (nextIndex + direction + count) % count;
+
+        if (loadMusicTrack(nextIndex, false)) {
+            applyAudioSettings();
+            showNotification("RADIO: " + getCurrentTrackLabel());
+        } else {
+            showNotification("RADIO: FAILED TO LOAD TRACK");
+        }
+    }
+
+    private void stopRadioTrack() {
+        if (!audioInitialized || musicSource == 0) {
+            return;
+        }
+        alSourceStop(musicSource);
+        showNotification("RADIO: STOPPED");
     }
 
     private void cleanupAudio() {
@@ -677,6 +894,8 @@ public class ChernobylGameCore {
             alcCloseDevice(audioDevice);
             audioDevice = 0;
         }
+        musicPlaylist.clear();
+        currentMusicIndex = -1;
         audioInitialized = false;
     }
 
@@ -1127,6 +1346,7 @@ public class ChernobylGameCore {
             tutorialStep = 0;
         } else if (selection == 2) {
             // SETTINGS
+            settingsOpenedFromPause = false;
             gameState = STATE_SETTINGS;
         } else if (selection == 3) {
             // QUIT
@@ -1249,7 +1469,15 @@ public class ChernobylGameCore {
         float backY = cardY + 18f;
         if (clicked && mouseX >= backX && mouseX <= backX + backW && mouseY >= backY && mouseY <= backY + backH) {
             playSfxClick();
-            gameState = STATE_MENU;
+            if (settingsOpenedFromPause) {
+                gameState = STATE_PLAYING;
+                pauseMenuOpen = true;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                pauseMenuHovered = -1;
+                pauseMenuTime = 0f;
+            } else {
+                gameState = STATE_MENU;
+            }
         }
 
         float rowX = cardX + 60f;
@@ -1311,7 +1539,15 @@ public class ChernobylGameCore {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             if (!menuEscHeld) {
                 menuEscHeld = true;
-                gameState = STATE_MENU;
+                if (settingsOpenedFromPause) {
+                    gameState = STATE_PLAYING;
+                    pauseMenuOpen = true;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    pauseMenuHovered = -1;
+                    pauseMenuTime = 0f;
+                } else {
+                    gameState = STATE_MENU;
+                }
             }
         } else {
             menuEscHeld = false;
@@ -1355,7 +1591,7 @@ public class ChernobylGameCore {
         float btnX = (screenW - btnW) / 2;
         float centerY = screenH * 0.5f;
         float btnGap = 60;
-        int btnCount = 2; // Resume, Quit to Title
+        int btnCount = 3; // Resume, Settings, Quit to Title
 
         // Hover detection
         pauseMenuHovered = -1;
@@ -1396,9 +1632,17 @@ public class ChernobylGameCore {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 firstMouse = true;
             } else if (pauseMenuHovered == 1) {
+                // SETTINGS
+                playSfxClick();
+                pauseMenuOpen = false;
+                settingsOpenedFromPause = true;
+                gameState = STATE_SETTINGS;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            } else if (pauseMenuHovered == 2) {
                 // QUIT TO TITLE
                 playSfxClick();
                 pauseMenuOpen = false;
+                settingsOpenedFromPause = false;
                 gameState = STATE_MENU;
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
@@ -1416,6 +1660,13 @@ public class ChernobylGameCore {
                 } else if (pauseMenuHovered == 1) {
                     playSfxClick();
                     pauseMenuOpen = false;
+                    settingsOpenedFromPause = true;
+                    gameState = STATE_SETTINGS;
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                } else if (pauseMenuHovered == 2) {
+                    playSfxClick();
+                    pauseMenuOpen = false;
+                    settingsOpenedFromPause = false;
                     gameState = STATE_MENU;
                     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 }
@@ -1470,9 +1721,10 @@ public class ChernobylGameCore {
         float btnW = 340, btnH = 50;
         float centerY = screenH * 0.5f;
         float btnGap = 60;
-        String[] btnLabels = {"RESUME GAME", "QUIT TO TITLE"};
+        String[] btnLabels = {"RESUME GAME", "SETTINGS", "QUIT TO TITLE"};
         float[][] btnColors = {
             {0.6f, 0.35f, 0.08f},   // Warm amber (resume)
+            {0.35f, 0.25f, 0.18f},  // Muted bronze (settings)
             {0.55f, 0.15f, 0.05f}   // Deep red-orange (quit)
         };
         int btnCount = btnLabels.length;
@@ -1764,7 +2016,7 @@ public class ChernobylGameCore {
             drawHUDText("AUDIO OUTPUT", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
             drawSettingsSlider("MUSIC", musicEnabled, musicVolume, rowX, rowStartY, rowW, rowH);
             drawSettingsSlider("SOUND FX", soundEnabled, masterVolume, rowX, rowStartY - rowGap, rowW, rowH);
-            drawHUDText("NOTE: MUSIC REQUIRES A MUSIC.OGG FILE IN THE PROJECT FOLDER", rowX, rowStartY - rowGap - 50, 1, 0.6f, 0.5f, 0.3f, 0.9f);
+            drawHUDText("NOTE: DROP ONE OR MORE .OGG SONGS IN THE PROJECT FOLDER FOR RADIO MUSIC", rowX, rowStartY - rowGap - 50, 1, 0.6f, 0.5f, 0.3f, 0.9f);
         } else if (settingsTab == 1) {
             drawHUDText("KEYBOARD & MOUSE", rowX, rowStartY + 70, 2, 0.9f, 0.7f, 0.2f, 1f);
             String[] lines = new String[] {
@@ -3732,6 +3984,8 @@ public class ChernobylGameCore {
             drawHUDRect(promptX, 55, promptW, 35, 0f, 0f, 0f, 0.6f);
             drawHUDText(prompt, promptX + 15, 68, 2, 1f, 1f, 1f, 1f);
         }
+
+        renderHotbarOverlay(screenW, screenH);
 
         // Machine interaction prompt
         renderMachinePrompt(screenW, screenH);
@@ -6040,6 +6294,8 @@ public class ChernobylGameCore {
         blockTextures.put("light_blue_concrete", generateConcreteTexture(0xB87A40));
         blockTextures.put("green_concrete", generateConcreteTexture(0x2D5A27));
         blockTextures.put("glass", generateGlassTexture());
+        blockTextures.put("glass_connected", generateGlassConnectedTexture());
+        blockTextures.put("sand", generateConcreteTexture(0xD8C08A));
         blockTextures.put("glowstone", generateGlowstoneTexture());
         blockTextures.put("redstone_block", generateRedstoneBlockTexture());
         blockTextures.put("obsidian", generateObsidianTexture());
@@ -6103,6 +6359,7 @@ public class ChernobylGameCore {
         blockTextures.put("player_body", generatePlayerBodyTexture());
         blockTextures.put("player_legs", generatePlayerLegsTexture());
         blockTextures.put("player_arms", generatePlayerArmsTexture());
+        blockTextures.put("radio_item", generateRadioItemTexture());
         
         // Name label textures
         blockTextures.put("akimov_label", generateNameRoleLabelTexture("A. AKIMOV", "SHIFT SUPERVISOR"));
@@ -7460,6 +7717,20 @@ public class ChernobylGameCore {
         }
         return createTextureFromPixels(pixels);
     }
+
+    private int generateGlassConnectedTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+
+        for (int y = 0; y < TEXTURE_SIZE; y++) {
+            for (int x = 0; x < TEXTURE_SIZE; x++) {
+                // Connected glass: no frame lines, only very subtle tint
+                int r = 220, g = 240, b = 255;
+                int alpha = 30;
+                pixels[y * TEXTURE_SIZE + x] = (alpha << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        return createTextureFromPixels(pixels);
+    }
     
     private int generateGlowstoneTexture() {
         int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
@@ -8311,43 +8582,43 @@ public class ChernobylGameCore {
             }
         }
 
-             // Outer ring of gray rods (bigger circle)
-             int outerRingRadius = channelRadius + 3;
-             float outerRingMin = (reactorRadius - 0.2f) * BLOCK_SIZE * 0.8f;
-             float outerRingMax = (reactorRadius + 1.4f) * BLOCK_SIZE * 0.8f;
-             for (int gx = -outerRingRadius; gx <= outerRingRadius; gx++) {
-                 for (int gz = -outerRingRadius; gz <= outerRingRadius; gz++) {
-                  float px = reactorCenterX + gx * channelSpacing;
-                  float pz = hallZ + gz * channelSpacing;
-                  float distToCenter = (float)Math.sqrt(Math.pow(px - reactorCenterX, 2) + Math.pow(pz - hallZ, 2));
-                  if (distToCenter < outerRingMin || distToCenter > outerRingMax) continue;
+        // Outer ring of colored rods (bigger circle)
+        int outerRingRadius = channelRadius + 3;
+        float outerRingMin = (reactorRadius - 0.2f) * BLOCK_SIZE * 0.8f;
+        float outerRingMax = (reactorRadius + 1.4f) * BLOCK_SIZE * 0.8f;
+        for (int gx = -outerRingRadius; gx <= outerRingRadius; gx++) {
+            for (int gz = -outerRingRadius; gz <= outerRingRadius; gz++) {
+                float px = reactorCenterX + gx * channelSpacing;
+                float pz = hallZ + gz * channelSpacing;
+                float distToCenter = (float)Math.sqrt(Math.pow(px - reactorCenterX, 2) + Math.pow(pz - hallZ, 2));
+                if (distToCenter < outerRingMin || distToCenter > outerRingMax) continue;
 
-                  float capY = reactorTopY + BLOCK_SIZE * 0.18f;
-                  TexturedGameObject rodObj = addTexturedCubeAndReturn(px,
-                      capY,
-                      pz,
-                      BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.18f, BLOCK_SIZE * 0.25f, "fuel_cap_gray");
+                float chance = capRand.nextFloat();
+                String capTexture;
+                boolean axialLine = (gx == 0 || gz == 0 || Math.abs(gx) == Math.abs(gz));
+                if (axialLine && chance < 0.45f) {
+                    capTexture = "fuel_cap_yellow";
+                } else if (chance < 0.08f) {
+                    capTexture = "fuel_cap_red";
+                } else if (chance < 0.16f) {
+                    capTexture = "fuel_cap_blue";
+                } else if (chance < 0.3f) {
+                    capTexture = "fuel_cap_yellow";
+                } else {
+                    capTexture = "fuel_cap_gray";
+                }
 
-                  float speed = 0.8f + capRand.nextFloat() * 1.2f;  // 0.8 to 2.0 Hz
-                  float phase = capRand.nextFloat() * (float)Math.PI * 2;
-                  float amplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
-                  fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
-                 }
-             }
+                float capY = reactorTopY + BLOCK_SIZE * 0.18f;
+                TexturedGameObject rodObj = addTexturedCubeAndReturn(px,
+                    capY,
+                    pz,
+                    BLOCK_SIZE * 0.25f, BLOCK_SIZE * 0.18f, BLOCK_SIZE * 0.25f, capTexture);
 
-        // Radial coolant pipes crisscrossing the biological shield
-        for (int i = 0; i < 4; i++) {
-            double angle = (Math.PI / 4.0) + i * (Math.PI / 2.0);
-            float dirX = (float)Math.cos(angle);
-            float dirZ = (float)Math.sin(angle);
-             TexturedGameObject pumpRod = addTexturedCubeAndReturn(reactorCenterX + dirX * BLOCK_SIZE * 2.5f,
-                 reactorTopY + BLOCK_SIZE * 0.35f,
-                 hallZ + dirZ * BLOCK_SIZE * 2.5f,
-                 BLOCK_SIZE * 0.5f, BLOCK_SIZE * 0.2f, BLOCK_SIZE * 3.5f, "cable_tray");
-             float pumpSpeed = 0.6f + capRand.nextFloat() * 1.2f;
-             float pumpPhase = capRand.nextFloat() * (float)Math.PI * 2;
-             float pumpAmplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
-             fuelRodAnimations.add(new FuelRodAnimation(pumpRod, reactorTopY + BLOCK_SIZE * 0.35f, pumpSpeed, pumpPhase, pumpAmplitude));
+                float speed = 0.8f + capRand.nextFloat() * 1.2f;  // 0.8 to 2.0 Hz
+                float phase = capRand.nextFloat() * (float)Math.PI * 2;
+                float amplitude = BLOCK_SIZE * 0.1f + capRand.nextFloat() * BLOCK_SIZE * 0.08f;
+                fuelRodAnimations.add(new FuelRodAnimation(rodObj, capY, speed, phase, amplitude));
+            }
         }
 
         // === SAFETY FENCE around reactor ===
@@ -8468,11 +8739,13 @@ public class ChernobylGameCore {
         for (int z = -hallDepth; z <= hallDepth; z++) {
             for (int h = 0; h < tallHallHeight; h++) {
                 float blockCenterY = hallY + h * BLOCK_SIZE;
-                float blockBottom = blockCenterY - BLOCK_SIZE * 0.5f;
-                float blockTop = blockBottom + BLOCK_SIZE;
-                boolean overlapsControlRoomView = (blockTop > CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y
-                    && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
-                String wallTexture = overlapsControlRoomView ? "glass" : "reactor_wall_white";
+                boolean overlapsControlRoomView = isHallWindowGlassBand(hallY, h);
+                boolean edgeGlass = overlapsControlRoomView && (z == -hallDepth || z == hallDepth
+                    || !isHallWindowGlassBand(hallY, h - 1)
+                    || !isHallWindowGlassBand(hallY, h + 1));
+                String wallTexture = overlapsControlRoomView
+                    ? (edgeGlass ? "glass" : "glass_connected")
+                    : "reactor_wall_white";
                 addTexturedCube(hallX - hallWidth * BLOCK_SIZE, blockCenterY, hallZ + z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
             }
@@ -8482,11 +8755,13 @@ public class ChernobylGameCore {
         for (int z = -hallDepth; z <= hallDepth; z++) {
             for (int h = 0; h < tallHallHeight; h++) {
                 float blockCenterY = hallY + h * BLOCK_SIZE;
-                float blockBottom = blockCenterY - BLOCK_SIZE * 0.5f;
-                float blockTop = blockBottom + BLOCK_SIZE;
-                boolean overlapsControlRoomView = (blockTop > CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y
-                    && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
-                String wallTexture = overlapsControlRoomView ? "glass" : "reactor_wall_white";
+                boolean overlapsControlRoomView = isHallWindowGlassBand(hallY, h);
+                boolean edgeGlass = overlapsControlRoomView && (z == -hallDepth || z == hallDepth
+                    || !isHallWindowGlassBand(hallY, h - 1)
+                    || !isHallWindowGlassBand(hallY, h + 1));
+                String wallTexture = overlapsControlRoomView
+                    ? (edgeGlass ? "glass" : "glass_connected")
+                    : "reactor_wall_white";
                 addTexturedCube(hallX, blockCenterY, hallZ + z * BLOCK_SIZE,
                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
             }
@@ -8501,7 +8776,7 @@ public class ChernobylGameCore {
                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
                   }
                   addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
-                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "glass");
+                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "sand");
             }
         }
 
@@ -8522,8 +8797,13 @@ public class ChernobylGameCore {
                 if (dist > domeRadiusBlocks) continue;
                 float heightBlocks = (float)Math.sqrt(Math.max(0f, domeRadiusBlocks * domeRadiusBlocks - dist * dist));
                 float y = ceilingY + heightBlocks * BLOCK_SIZE * 0.5f;
+                boolean hasLeft = Math.sqrt((dx - 1) * (dx - 1) + dz * dz) <= domeRadiusBlocks;
+                boolean hasRight = Math.sqrt((dx + 1) * (dx + 1) + dz * dz) <= domeRadiusBlocks;
+                boolean hasBack = Math.sqrt(dx * dx + (dz - 1) * (dz - 1)) <= domeRadiusBlocks;
+                boolean hasFront = Math.sqrt(dx * dx + (dz + 1) * (dz + 1)) <= domeRadiusBlocks;
+                boolean edgeGlass = !(hasLeft && hasRight && hasBack && hasFront);
                 addTexturedCube(hallCenterX + dx * BLOCK_SIZE, y, hallZ + dz * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "glass");
+                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, edgeGlass ? "glass" : "glass_connected");
             }
         }
 
@@ -8890,11 +9170,10 @@ public class ChernobylGameCore {
 
 
         // === NPC: PEREVOZCHENKO (Reactor Section Foreman) ===
-        // Standing on the walkway near where it opens to the reactor hall,
-        // inspecting the reactor from the catwalk
+        // Standing on the mezzanine catwalk (balcony), inspecting the reactor
         createNPCEngineer("Perevozchenko",
             -19 * BLOCK_SIZE,       // x: on the walkway
-            hallFloorY,             // y: reactor hall floor level (-180)
+            REACTOR_HALL_MEZZANINE_Y, // y: balcony level
             -6 * BLOCK_SIZE,        // z: midway along walkway, near reactor
             0.0f,                   // facing: towards +Z (looking along the reactor hall)
             "perevozchenko_head", "perevozchenko_body", "perevozchenko_legs", "perevozchenko_arms");
@@ -9596,20 +9875,79 @@ public class ChernobylGameCore {
             pixels[11 * S + x] = orangeDk;
         }
 
-        // Work gloves (darker, thicker hands)
-        int gloveM  = rgba(140, 110, 60);
-        int gloveDk = rgba(110, 85, 45);
-        int gloveLt = rgba(160, 130, 75);
-        for (int y = 12; y < S; y++)
+        // Wrist-to-hand transition: thin blue cuff, then skin tone hand
+        int skinM  = rgba(222, 177, 146);
+        int skinLt = rgba(236, 194, 162);
+        int skinDk = rgba(196, 149, 121);
+
+        for (int x = 0; x < S; x++) {
+            if (x == 0 || x == 15) pixels[12 * S + x] = blueSh;
+            else if (x == 1 || x == 14) pixels[12 * S + x] = blueDk;
+            else pixels[12 * S + x] = blueM;
+        }
+
+        for (int y = 13; y < S; y++)
             for (int x = 0; x < S; x++) {
-                if (x == 0 || x == 15) pixels[y * S + x] = gloveDk;
-                else if (y == 12) pixels[y * S + x] = gloveLt;
-                else pixels[y * S + x] = gloveM;
+                if (x == 0 || x == 15) pixels[y * S + x] = skinDk;
+                else if ((x + y) % 5 == 0) pixels[y * S + x] = skinLt;
+                else pixels[y * S + x] = skinM;
             }
-        // Glove knuckle stitching
-        pixels[13 * S + 4] = gloveDk; pixels[13 * S + 7] = gloveDk;
-        pixels[13 * S + 10] = gloveDk; pixels[13 * S + 13] = gloveDk;
-        for (int x = 2; x <= 13; x++) pixels[15 * S + x] = gloveDk;
+
+        // Light crease near fingertips
+        for (int x = 3; x <= 12; x += 3) pixels[15 * S + x] = skinDk;
+
+        return createTextureFromPixels(pixels);
+    }
+
+    private int generateRadioItemTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        int S = TEXTURE_SIZE;
+
+        int shell = rgba(54, 56, 63);
+        int shellLt = rgba(74, 77, 86);
+        int shellDk = rgba(34, 36, 42);
+        int screen = rgba(45, 155, 86);
+        int screenLt = rgba(90, 210, 130);
+        int knob = rgba(176, 126, 55);
+        int antenna = rgba(108, 110, 118);
+
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                if (x == 0 || y == 0 || x == S - 1 || y == S - 1) {
+                    pixels[y * S + x] = shellDk;
+                } else if (x == 1 || y == 1 || x == S - 2 || y == S - 2) {
+                    pixels[y * S + x] = shellLt;
+                } else {
+                    pixels[y * S + x] = shell;
+                }
+            }
+        }
+
+        // Green status screen
+        for (int y = 4; y <= 8; y++) {
+            for (int x = 3; x <= 12; x++) {
+                pixels[y * S + x] = ((x + y) % 3 == 0) ? screenLt : screen;
+            }
+        }
+
+        // Speaker grill
+        for (int y = 10; y <= 13; y++) {
+            for (int x = 3; x <= 9; x += 2) {
+                pixels[y * S + x] = shellDk;
+            }
+        }
+
+        // Knobs and indicator
+        pixels[10 * S + 12] = knob;
+        pixels[11 * S + 12] = knob;
+        pixels[12 * S + 12] = knob;
+        pixels[10 * S + 13] = knob;
+        pixels[11 * S + 13] = knob;
+        pixels[12 * S + 13] = knob;
+
+        // Antenna stem
+        pixels[14 * S + 13] = antenna;
+        pixels[15 * S + 13] = antenna;
 
         return createTextureFromPixels(pixels);
     }
@@ -10770,7 +11108,7 @@ public class ChernobylGameCore {
     
     private void addTexturedCube(float x, float y, float z, float sx, float sy, float sz, String textureName) {
         int textureId = blockTextures.getOrDefault(textureName, blockTextures.get("stone"));
-        boolean isTransparent = textureName.equals("glass");
+        boolean isTransparent = textureName.equals("glass") || textureName.equals("glass_connected");
         TexturedGameObject obj = new TexturedGameObject(texturedCubeMesh, new Vector3f(x, y, z), 
                                                         new Vector3f(sx, sy, sz), textureId, isTransparent);
         obj.textureName = textureName;
@@ -10779,7 +11117,7 @@ public class ChernobylGameCore {
     
     private TexturedGameObject addTexturedCubeAndReturn(float x, float y, float z, float sx, float sy, float sz, String textureName) {
         int textureId = blockTextures.getOrDefault(textureName, blockTextures.get("stone"));
-        boolean isTransparent = textureName.equals("glass");
+        boolean isTransparent = textureName.equals("glass") || textureName.equals("glass_connected");
         TexturedGameObject obj = new TexturedGameObject(texturedCubeMesh, new Vector3f(x, y, z), 
                                                         new Vector3f(sx, sy, sz), textureId, isTransparent);
         obj.textureName = textureName;
@@ -11286,6 +11624,58 @@ public class ChernobylGameCore {
         } else {
             vKeyPressed = false;
         }
+
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) hotbarSelectedSlot = 0;
+        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) hotbarSelectedSlot = 1;
+        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) hotbarSelectedSlot = 2;
+        if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) hotbarSelectedSlot = 3;
+        if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) hotbarSelectedSlot = 4;
+        if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS) hotbarSelectedSlot = 5;
+        if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) hotbarSelectedSlot = 6;
+        if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) hotbarSelectedSlot = 7;
+        if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) hotbarSelectedSlot = 8;
+
+        boolean radioEquipped = hotbarSelectedSlot >= 0
+            && hotbarSelectedSlot < HOTBAR_ITEMS.length
+            && "RADIO".equals(HOTBAR_ITEMS[hotbarSelectedSlot]);
+
+        if (radioEquipped && previousHotbarSlot != hotbarSelectedSlot) {
+            showNotification("RADIO READY - , PREV   . NEXT   ; STOP   |   " + getCurrentTrackLabel());
+        }
+
+        if (radioEquipped && !dialogueActive && !machineUIActive) {
+            if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) {
+                if (!radioNextTrackPressed) {
+                    radioNextTrackPressed = true;
+                    switchRadioTrack(1);
+                }
+            } else {
+                radioNextTrackPressed = false;
+            }
+
+            if (glfwGetKey(window, GLFW_KEY_COMMA) == GLFW_PRESS) {
+                if (!radioPrevTrackPressed) {
+                    radioPrevTrackPressed = true;
+                    switchRadioTrack(-1);
+                }
+            } else {
+                radioPrevTrackPressed = false;
+            }
+
+            if (glfwGetKey(window, GLFW_KEY_SEMICOLON) == GLFW_PRESS) {
+                if (!radioStopPressed) {
+                    radioStopPressed = true;
+                    stopRadioTrack();
+                }
+            } else {
+                radioStopPressed = false;
+            }
+        } else {
+            radioNextTrackPressed = false;
+            radioPrevTrackPressed = false;
+            radioStopPressed = false;
+        }
+        previousHotbarSlot = hotbarSelectedSlot;
         
         // Update view matrix
         // Calculate screen shake offset based on reactor state
@@ -11317,11 +11707,13 @@ public class ChernobylGameCore {
         if (thirdPerson) {
             // 3rd person: camera behind and above the player, looking at the player
             Vector3f behindDir = new Vector3f(-direction.x, 0, -direction.z).normalize();
-            Vector3f camPos3rd = new Vector3f(cameraPos)
+            Vector3f camDesired = new Vector3f(cameraPos)
                 .add(behindDir.x * THIRD_PERSON_DISTANCE, THIRD_PERSON_HEIGHT, behindDir.z * THIRD_PERSON_DISTANCE);
-            // Look at a point slightly above the player's feet (chest height)
-            Vector3f lookTarget = new Vector3f(cameraPos.x, cameraPos.y - 20f, cameraPos.z);
-            camPos3rd.add(shakeX, shakeY, shakeX * 0.5f);
+            // Keep target near upper torso so turning to face the camera stays stable.
+            Vector3f lookTarget = new Vector3f(cameraPos.x, cameraPos.y + 18f, cameraPos.z);
+            camDesired.add(shakeX, shakeY, shakeX * 0.5f);
+            Vector3f camOrigin = new Vector3f(cameraPos.x, cameraPos.y + THIRD_PERSON_HEIGHT * 0.35f, cameraPos.z);
+            Vector3f camPos3rd = resolveThirdPersonCameraPosition(camOrigin, camDesired);
             view.setLookAt(camPos3rd, lookTarget, new Vector3f(0, 1, 0));
         } else {
             // 1st person: standard
@@ -11332,6 +11724,45 @@ public class ChernobylGameCore {
         
         // Story system update
         updateStory(window, deltaTime);
+    }
+
+    private Vector3f resolveThirdPersonCameraPosition(Vector3f origin, Vector3f desired) {
+        Vector3f delta = new Vector3f(desired).sub(origin);
+        Vector3f safe = new Vector3f(origin);
+        boolean collided = false;
+        final int samples = 24;
+        final float minDistance = 90f;
+
+        for (int i = 1; i <= samples; i++) {
+            float t = i / (float) samples;
+            Vector3f sample = new Vector3f(origin).fma(t, delta);
+            if (checkCollision(sample.x, sample.y, sample.z)) {
+                collided = true;
+                break;
+            }
+            safe.set(sample);
+        }
+
+        if (collided) {
+            Vector3f pullDir = new Vector3f(origin).sub(safe);
+            if (pullDir.lengthSquared() > 0.0001f) {
+                pullDir.normalize().mul(3f);
+                safe.add(pullDir);
+            }
+        }
+
+        Vector3f cameraOffset = new Vector3f(safe).sub(origin);
+        float distance = cameraOffset.length();
+        if (distance < minDistance) {
+            Vector3f fallbackDir = new Vector3f(delta);
+            if (fallbackDir.lengthSquared() < 0.0001f) {
+                fallbackDir.set(0f, 0f, -1f);
+            } else {
+                fallbackDir.normalize();
+            }
+            safe.set(origin).fma(minDistance, fallbackDir);
+        }
+        return safe;
     }
     
     // Toggle fullscreen mode
@@ -11702,6 +12133,31 @@ public class ChernobylGameCore {
             return true;
         }
 
+        // === HALL MAP STRUCTURAL WALL COLLISION ===
+        // Keep this wall-only so floors/rails/gameplay logic remain unchanged.
+        boolean inHallMapZone = inReactorHall || inWalkway || inPumpWalkway || inPumpAnnex
+            || inPumpRightArm || inBottomLanding || inStairs || inStraightCorridor;
+        if (inHallMapZone) {
+            for (TexturedGameObject obj : texturedObjects) {
+                if (obj == null || obj.isNPCPart) continue;
+                if (!isHallMapWallTexture(obj.textureName)) continue;
+                if (removalExists(obj.position, obj.scale)) continue;
+
+                float halfX = obj.scale.x * 0.5f;
+                float halfZ = obj.scale.z * 0.5f;
+                float expandedHalfX = halfX + PR;
+                float expandedHalfZ = halfZ + PR;
+                if (Math.abs(x - obj.position.x) > expandedHalfX) continue;
+                if (Math.abs(z - obj.position.z) > expandedHalfZ) continue;
+
+                float objBottom = GROUND_LEVEL + obj.position.y - obj.scale.y * 0.5f;
+                float objTop = GROUND_LEVEL + obj.position.y + obj.scale.y * 0.5f;
+                if (playerTop <= objBottom || playerBottom >= objTop) continue;
+
+                return true;
+            }
+        }
+
         // === NPC COLLISION (floor-aware so only nearby NPCs block) ===
         for (NPCEngineer npc : npcEngineers) {
             float npcEyeLevel = npc.basePosition.y + GROUND_LEVEL;
@@ -11861,6 +12317,20 @@ public class ChernobylGameCore {
         }
 
         return false;
+    }
+
+    private boolean isHallMapWallTexture(String textureName) {
+        return "reactor_wall_white".equals(textureName)
+            || "soviet_gray_wall".equals(textureName)
+            || "sand".equals(textureName);
+    }
+
+    private boolean isHallWindowGlassBand(float hallY, int h) {
+        float blockCenterY = hallY + h * BLOCK_SIZE;
+        float blockBottom = blockCenterY - BLOCK_SIZE * 0.5f;
+        float blockTop = blockBottom + BLOCK_SIZE;
+        return (blockTop > CONTROL_ROOM_WINDOW_BOTTOM_WORLD_Y
+            && blockBottom < CONTROL_ROOM_WINDOW_TOP_WORLD_Y);
     }
 
     public void render() {
@@ -12173,6 +12643,10 @@ public class ChernobylGameCore {
             }
             
             glDepthMask(true); // Re-enable depth writing
+        }
+
+        if (!thirdPerson && shouldRenderFirstPersonHand()) {
+            renderFirstPersonHand();
         }
         
         // Render HUD overlay
