@@ -99,12 +99,18 @@ public class ChernobylGameCore {
     // Hotbar UI
     private int hotbarSelectedSlot = 0;
     private static final String[] HOTBAR_ITEMS = {
-        "HAND", "RADIO", "", "", "", "", "", "", ""
+        "HAND", "RADIO", "CIGARETTE", "", "", "", "", "", ""
     };
     // Set to true for items that should show the first-person hand/item overlay.
     private static final boolean[] HOTBAR_RENDERABLE = {
-        false, true, false, false, false, false, false, false, false
+        false, true, true, false, false, false, false, false, false
     };
+    private static final int HOTBAR_CIGARETTE_SLOT = 2;
+    private boolean cigaretteLit = false;
+    private boolean cigaretteTabHeld = false;
+    private float cigaretteCycleTimer = 0f;
+    private float cigaretteSmokeEmitTimer = 0f;
+    private final List<SmokeParticle> cigaretteSmokeParticles = new ArrayList<>();
 
     // Walk animation
     private float walkAnimPhase = 0f;
@@ -146,13 +152,13 @@ public class ChernobylGameCore {
     private static final int CORRIDOR_WALL_H = 6; // Corridor wall height in blocks
     
     private void renderHotbarOverlay(float screenW, float screenH) {
-        float barW = 396f;
-        float barH = 62f;
+        float barW = 468f;
+        float barH = 74f;
         float barX = (screenW - barW) / 2f;
-        float barY = 18f;
-        float slotGap = 6f;
+        float barY = 16f;
+        float slotGap = 7f;
         float slotW = (barW - slotGap * 8f) / 9f;
-        float slotH = 48f;
+        float slotH = 58f;
 
         drawHUDRect(barX - 10f, barY - 8f, barW + 20f, barH + 14f, 0f, 0f, 0f, 0.35f);
         for (int i = 0; i < 9; i++) {
@@ -172,12 +178,12 @@ public class ChernobylGameCore {
 
             drawHotbarItemIcon(HOTBAR_ITEMS[i], slotX, barY, slotW, slotH, selected);
 
-            drawHUDText(String.valueOf(i + 1), slotX + 6f, barY + 5f, 2, 0.7f, 0.7f, 0.7f, selected ? 1f : 0.65f);
+            drawHUDText(String.valueOf(i + 1), slotX + 7f, barY + 6f, 2, 0.7f, 0.7f, 0.7f, selected ? 1f : 0.65f);
             String itemName = HOTBAR_ITEMS[i];
             if (itemName != null && !itemName.isEmpty()) {
                 float itemTextW = itemName.length() * 5f; // scale 1: ~4px glyph + 1px spacing
                 float itemX = slotX + (slotW - itemTextW) * 0.5f;
-                drawHUDText(itemName, itemX, barY + 33f, 1, 0.92f, 0.9f, 0.85f, selected ? 1f : 0.8f);
+                drawHUDText(itemName, itemX, barY + 41f, 1, 0.92f, 0.9f, 0.85f, selected ? 1f : 0.8f);
             }
         }
 
@@ -220,6 +226,15 @@ public class ChernobylGameCore {
             drawHUDRect(bodyX + bodyW * 0.12f, bodyY + bodyH * 0.16f, bodyW * 0.22f, bodyH * 0.24f, 0.5f, 0.5f, 0.5f, alpha);
             drawHUDRect(bodyX + bodyW * 0.42f, bodyY + bodyH * 0.16f, bodyW * 0.12f, bodyH * 0.12f, 0.75f, 0.5f, 0.2f, alpha);
             drawHUDRect(bodyX + bodyW * 0.74f, bodyY + bodyH * 0.95f, bodyW * 0.08f, bodyH * 0.45f, 0.45f, 0.45f, 0.45f, alpha);
+        } else if ("CIGARETTE".equals(itemName)) {
+            float cigW = slotW * 0.34f;
+            float cigH = slotH * 0.12f;
+            float cigX = iconX - cigW * 0.5f;
+            float cigY = iconY - cigH * 0.5f;
+
+            drawHUDRect(cigX, cigY, cigW, cigH, 0.92f, 0.88f, 0.78f, alpha);
+            drawHUDRect(cigX + cigW * 0.76f, cigY, cigW * 0.22f, cigH, 0.88f, 0.42f, 0.08f, alpha);
+            drawHUDRect(cigX + cigW * 0.90f, cigY + cigH * 0.25f, cigW * 0.18f, cigH * 0.5f, 0.98f, 0.72f, 0.22f, alpha);
         }
     }
 
@@ -228,6 +243,205 @@ public class ChernobylGameCore {
             return false;
         }
         return HOTBAR_RENDERABLE[hotbarSelectedSlot];
+    }
+
+    private boolean isCigaretteEquipped() {
+        return hotbarSelectedSlot == HOTBAR_CIGARETTE_SLOT;
+    }
+
+    private boolean isCigaretteActive() {
+        return isCigaretteEquipped() && cigaretteLit;
+    }
+
+    private Vector3f getPlayerMouthWorldPosition() {
+        Vector3f forward;
+        if (thirdPerson) {
+            float facingRad = (float) Math.toRadians(playerFacingYaw);
+            forward = new Vector3f((float) Math.cos(facingRad), 0f, (float) Math.sin(facingRad)).normalize();
+            float baseX = cameraPos.x;
+            float baseY = cameraPos.y - GROUND_LEVEL;
+            float baseZ = cameraPos.z;
+            float mouthY = baseY + playerHead.position.y - 3f;
+            return new Vector3f(baseX, mouthY, baseZ).add(new Vector3f(forward).mul(12.2f));
+        }
+
+        forward = new Vector3f(
+            (float) (Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch))),
+            (float) Math.sin(Math.toRadians(pitch)),
+            (float) (Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch)))
+        ).normalize();
+        return new Vector3f(cameraPos)
+            .add(new Vector3f(forward).mul(12f))
+            .add(0f, -8f, 0f);
+    }
+
+    private Vector3f getThirdPersonCigaretteDirection(float puffBlend, float restBlend) {
+        float facingRad = (float) Math.toRadians(playerFacingYaw);
+        Vector3f faceForward = new Vector3f((float) Math.cos(facingRad), 0f, (float) Math.sin(facingRad)).normalize();
+        Vector3f faceRight = new Vector3f(0f, 1f, 0f).cross(faceForward, new Vector3f()).normalize();
+
+        float armX = -1.46f - 0.02f * puffBlend + 0.02f * restBlend;
+        float armZ = -0.62f + 0.03f * puffBlend;
+
+        Matrix4f armBasis = new Matrix4f()
+            .identity()
+            .rotateY(facingRad)
+            .rotateX(armX)
+            .rotateZ(armZ);
+
+        Vector3f shoulderToMouth = armBasis.transformDirection(new Vector3f(0f, -1f, 0f)).normalize();
+        return new Vector3f(shoulderToMouth)
+            .negate()
+            .add(new Vector3f(faceForward).mul(0.12f))
+            .add(new Vector3f(faceRight).mul(0.70f))
+            .normalize();
+    }
+
+    private Vector3f getThirdPersonCigaretteStart(float puffBlend, float restBlend) {
+        float facingRad = (float) Math.toRadians(playerFacingYaw);
+        Vector3f faceForward = new Vector3f((float) Math.cos(facingRad), 0f, (float) Math.sin(facingRad)).normalize();
+        Vector3f faceRight = new Vector3f(0f, 1f, 0f).cross(faceForward, new Vector3f()).normalize();
+
+        return getPlayerMouthWorldPosition()
+            .add(new Vector3f(faceRight).mul(0.10f))
+            .add(0f, -0.06f, 0f);
+    }
+
+    private Vector3f getCigaretteTipWorldPosition() {
+        if (thirdPerson) {
+            float puffBlend = getCigarettePuffBlend();
+            float restBlend = getCigaretteRestBlend();
+            Vector3f cigDir = getThirdPersonCigaretteDirection(puffBlend, restBlend);
+            Vector3f start = getThirdPersonCigaretteStart(puffBlend, restBlend);
+            return start.add(new Vector3f(cigDir).mul(13.6f));
+        }
+
+        Vector3f forward = new Vector3f(
+            (float) (Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch))),
+            (float) Math.sin(Math.toRadians(pitch)),
+            (float) (Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch)))
+        ).normalize();
+        Vector3f right = new Vector3f(forward).cross(new Vector3f(0f, 1f, 0f)).normalize();
+        if (right.lengthSquared() < 0.0001f) {
+            right.set(1f, 0f, 0f);
+        }
+        return new Vector3f(cameraPos)
+            .add(new Vector3f(forward).mul(13.2f))
+            .add(new Vector3f(right).mul(1.2f))
+            .add(0f, -8.8f, 0f);
+    }
+
+    private void spawnCigaretteSmokePuff(float puffPhase) {
+        Integer smokeTex = blockTextures.get("smoke_puff");
+        if (smokeTex == null) {
+            return;
+        }
+
+        Vector3f origin;
+        Vector3f smokeOutDir = null;
+        if (thirdPerson) {
+            float puffBlend = getCigarettePuffBlend();
+            float restBlend = getCigaretteRestBlend();
+            smokeOutDir = getThirdPersonCigaretteDirection(puffBlend, restBlend);
+            Vector3f tip = getThirdPersonCigaretteStart(puffBlend, restBlend)
+                .add(new Vector3f(smokeOutDir).mul(-13f));
+            // Spawn just beyond the opposite end.
+            origin = tip.fma(-0.35f, smokeOutDir);
+        } else {
+            origin = getCigaretteTipWorldPosition();
+        }
+
+        float puffBoost = puffPhase < 0.32f ? 1f : (puffPhase < 1.05f ? 0.55f : 0.35f);
+        float rise = 11f + puffBoost * 7f;
+        float drift = 0.18f + puffBoost * 0.45f;
+        Random smokeRand = new Random(System.nanoTime() ^ Float.floatToIntBits(puffPhase));
+
+        for (int i = 0; i < 1; i++) {
+            Vector3f velocity = new Vector3f(
+                (smokeRand.nextFloat() - 0.5f) * drift,
+                rise + smokeRand.nextFloat() * 5f,
+                (smokeRand.nextFloat() - 0.5f) * drift
+            );
+            if (thirdPerson && smokeOutDir != null) {
+                velocity.fma(-1.25f, smokeOutDir);
+            }
+            float life = 1.15f + smokeRand.nextFloat() * 0.55f;
+            float size = 3.6f + smokeRand.nextFloat() * 1.4f;
+            cigaretteSmokeParticles.add(new SmokeParticle(origin, velocity, life, size));
+        }
+    }
+
+    private void updateCigaretteSmoke(float dt) {
+        for (int i = cigaretteSmokeParticles.size() - 1; i >= 0; i--) {
+            SmokeParticle particle = cigaretteSmokeParticles.get(i);
+            particle.life -= dt;
+            particle.position.fma(dt, particle.velocity);
+            particle.velocity.x *= 0.988f;
+            particle.velocity.z *= 0.988f;
+            particle.velocity.y += 5f * dt;
+            particle.size += dt * 3.2f;
+            if (particle.life <= 0f) {
+                cigaretteSmokeParticles.remove(i);
+            }
+        }
+        while (cigaretteSmokeParticles.size() > 40) {
+            cigaretteSmokeParticles.remove(0);
+        }
+    }
+
+    private float getCigaretteCyclePhase() {
+        return cigaretteCycleTimer % 2.6f;
+    }
+
+    private float getCigarettePuffBlend() {
+        if (!isCigaretteActive()) {
+            return 0f;
+        }
+        float phase = getCigaretteCyclePhase();
+        if (phase < 0.32f) {
+            return phase / 0.32f;
+        }
+        if (phase < 1.05f) {
+            return 1f;
+        }
+        if (phase < 1.75f) {
+            return Math.max(0f, 1f - (phase - 1.05f) / 0.7f);
+        }
+        return 0f;
+    }
+
+    private float getCigaretteRestBlend() {
+        if (!isCigaretteActive()) {
+            return 0f;
+        }
+        float phase = getCigaretteCyclePhase();
+        if (phase < 0.32f) {
+            return 1f - phase / 0.32f;
+        }
+        if (phase < 1.05f) {
+            return 0f;
+        }
+        if (phase < 1.75f) {
+            return (phase - 1.05f) / 0.7f;
+        }
+        return 1f;
+    }
+
+    private float getCigaretteGlow() {
+        if (!isCigaretteActive()) {
+            return 0f;
+        }
+        float phase = getCigaretteCyclePhase();
+        if (phase < 0.32f) {
+            return 1f;
+        }
+        if (phase < 1.05f) {
+            return 0.8f;
+        }
+        if (phase < 1.75f) {
+            return 0.5f;
+        }
+        return 0.35f;
     }
     
     private void renderFirstPersonHand() {
@@ -242,6 +456,8 @@ public class ChernobylGameCore {
         Matrix4f handView = new Matrix4f();
         float sway = (float)Math.sin(walkAnimPhase) * 0.04f;
         float bob = (float)Math.abs(Math.sin(walkAnimPhase * 0.5f)) * 0.03f;
+        float puffBlend = getCigarettePuffBlend();
+        float restBlend = getCigaretteRestBlend();
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer fb = stack.mallocFloat(16);
@@ -249,10 +465,10 @@ public class ChernobylGameCore {
             glUniformMatrix4fv(projectionLoc, false, handProjection.get(fb));
 
             model.identity()
-                .translate(0.80f, -0.94f + bob, -0.15f)
-                .rotateZ(0.06f + sway)
+                .translate(0.78f + 0.08f * puffBlend, -0.94f + bob + 0.05f * puffBlend, -0.15f)
+                .rotateZ(0.06f + sway + 0.10f * puffBlend)
                 .rotateX((float)Math.PI)
-                .rotateY(0.14f)
+                .rotateY(0.14f - 0.08f * puffBlend)
                 .scale(0.34f, 0.57f, 0.34f);
             glUniformMatrix4fv(modelLoc, false, model.get(fb));
             glBindTexture(GL_TEXTURE_2D, playerRightArm.textureId);
@@ -272,8 +488,54 @@ public class ChernobylGameCore {
                     glBindTexture(GL_TEXTURE_2D, radioTex);
                     texturedCubeMesh.render();
                 }
+            } else if (isCigaretteEquipped()) {
+                Integer cigTex = blockTextures.get("cigarette_item");
+                if (cigTex != null) {
+                    glUniform1i(fullBrightLoc, 1);
+                    model.identity()
+                        .translate(0.54f + 0.02f * restBlend + 0.09f * puffBlend, -0.66f + bob + 0.04f * puffBlend, -0.09f)
+                        .rotateZ(0.16f + sway * 0.5f + 0.26f * puffBlend)
+                        .rotateX((float)Math.PI)
+                        .rotateY(-0.20f + 0.08f * puffBlend)
+                        .scale(0.30f, 0.10f, 0.10f);
+                    glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                    glBindTexture(GL_TEXTURE_2D, cigTex);
+                    texturedCubeMesh.render();
+                    glUniform1i(fullBrightLoc, 1);
+                }
             }
         }
+
+        glUniform1i(fullBrightLoc, 0);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+    }
+
+    private void renderCigaretteSmokeParticles() {
+        Integer smokeTex = blockTextures.get("smoke_puff");
+        if (smokeTex == null || cigaretteSmokeParticles.isEmpty()) {
+            return;
+        }
+
+        glUniform1i(useTextureLoc, 1);
+        glUniform1i(fullBrightLoc, 1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, smokeTex);
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            FloatBuffer fb = stack.mallocFloat(16);
+            for (SmokeParticle particle : cigaretteSmokeParticles) {
+                float alpha = Math.max(0f, Math.min(1f, particle.life / particle.maxLife));
+                model.identity()
+                    .translate(particle.position)
+                    .scale(particle.size, particle.size, particle.size);
+                glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                glUniform4f(colorLoc, 1f, 1f, 1f, alpha * 0.5f);
+                texturedCubeMesh.render();
+            }
+        }
+
+        glUniform1i(fullBrightLoc, 0);
     }
     // Stairs section: z from -34 to -42, descending from y=0 to y=-180
     private static final float STAIR_START_Z = -34 * BLOCK_SIZE;
@@ -2366,6 +2628,11 @@ public class ChernobylGameCore {
         notificationTimer = 0;
         menuTime = 0;
         menuParticlesSpawned = false;
+        cigaretteLit = false;
+        cigaretteTabHeld = false;
+        cigaretteCycleTimer = 0f;
+        cigaretteSmokeEmitTimer = 0f;
+        cigaretteSmokeParticles.clear();
         // Reset reactor
         reactorPower = 1600;
         controlRodsInserted = 211;
@@ -6359,7 +6626,10 @@ public class ChernobylGameCore {
         blockTextures.put("player_body", generatePlayerBodyTexture());
         blockTextures.put("player_legs", generatePlayerLegsTexture());
         blockTextures.put("player_arms", generatePlayerArmsTexture());
+        blockTextures.put("player_upper_arm", generatePlayerUpperArmTexture());
         blockTextures.put("radio_item", generateRadioItemTexture());
+        blockTextures.put("cigarette_item", generateCigaretteItemTexture());
+        blockTextures.put("smoke_puff", generateSmokePuffTexture());
         
         // Name label textures
         blockTextures.put("akimov_label", generateNameRoleLabelTexture("A. AKIMOV", "SHIFT SUPERVISOR"));
@@ -8751,19 +9021,19 @@ public class ChernobylGameCore {
             }
         }
 
-        // Window-side wall (toward control room) so the boundary is visible from the hall floor
-        for (int z = -hallDepth; z <= hallDepth; z++) {
+        // Window-side wall (toward control room) - glass in window band, white below (front edge only)
+        for (int x = 0; x < hallWidth; x++) {
             for (int h = 0; h < tallHallHeight; h++) {
                 float blockCenterY = hallY + h * BLOCK_SIZE;
-                boolean overlapsControlRoomView = isHallWindowGlassBand(hallY, h);
-                boolean edgeGlass = overlapsControlRoomView && (z == -hallDepth || z == hallDepth
-                    || !isHallWindowGlassBand(hallY, h - 1)
-                    || !isHallWindowGlassBand(hallY, h + 1));
-                String wallTexture = overlapsControlRoomView
-                    ? (edgeGlass ? "glass" : "glass_connected")
-                    : "reactor_wall_white";
-                addTexturedCube(hallX, blockCenterY, hallZ + z * BLOCK_SIZE,
-                       BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, wallTexture);
+                if (isHallWindowGlassBand(hallY, h)) {
+                    // Glass at the front edge only
+                    addTexturedCube(hallX - x * BLOCK_SIZE, blockCenterY, hallZ + hallDepth * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "glass_connected");
+                } else {
+                    // Below window band - white blocks at the front edge
+                    addTexturedCube(hallX - x * BLOCK_SIZE, blockCenterY, hallZ + hallDepth * BLOCK_SIZE,
+                           BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
             }
         }
 
@@ -8771,12 +9041,12 @@ public class ChernobylGameCore {
         for (int x = 0; x < hallWidth; x++) {
             for (int h = 0; h < tallHallHeight; h++) {
                 boolean isWalkwayDoor = (x >= 1 && x <= 3 && h < walkwayDoorHeightBlocks);
-                  if (!isWalkwayDoor) {
-                      addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
-                          BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
-                  }
-                  addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
-                      BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "sand");
+                if (!isWalkwayDoor) {
+                    addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ - hallDepth * BLOCK_SIZE,
+                        BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
+                }
+                addTexturedCube(hallX - x * BLOCK_SIZE, hallY + h * BLOCK_SIZE, hallZ + hallDepth * BLOCK_SIZE,
+                    BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, "reactor_wall_white");
             }
         }
 
@@ -9899,6 +10169,42 @@ public class ChernobylGameCore {
         return createTextureFromPixels(pixels);
     }
 
+    private int generatePlayerUpperArmTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        int S = TEXTURE_SIZE;
+
+        int blueM  = rgba(55, 80, 140);
+        int blueLt = rgba(70, 95, 160);
+        int blueDk = rgba(40, 60, 110);
+        int blueSh = rgba(30, 48, 88);
+        int orangeM = rgba(220, 130, 30);
+        int orangeDk = rgba(185, 105, 20);
+
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                if (x == 0 || x == S - 1) {
+                    pixels[y * S + x] = blueSh;
+                } else if (x == 1 || x == S - 2) {
+                    pixels[y * S + x] = blueDk;
+                } else if ((x + y) % 4 == 0) {
+                    pixels[y * S + x] = blueLt;
+                } else {
+                    pixels[y * S + x] = blueM;
+                }
+            }
+        }
+
+        // Shoulder seam and safety cuff only; no skin section so this segment cannot look like a hand.
+        for (int x = 0; x < S; x++) {
+            pixels[0 * S + x] = blueSh;
+            pixels[1 * S + x] = blueDk;
+            pixels[10 * S + x] = orangeM;
+            pixels[11 * S + x] = orangeDk;
+        }
+
+        return createTextureFromPixels(pixels);
+    }
+
     private int generateRadioItemTexture() {
         int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
         int S = TEXTURE_SIZE;
@@ -9950,6 +10256,64 @@ public class ChernobylGameCore {
         pixels[15 * S + 13] = antenna;
 
         return createTextureFromPixels(pixels);
+    }
+
+    private int generateCigaretteItemTexture() {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        int S = TEXTURE_SIZE;
+
+        int paper = rgba(240, 230, 214);
+        int paperShade = rgba(215, 205, 188);
+        int tip = rgba(195, 128, 56);
+        int ember = rgba(246, 108, 24);
+        int emberHot = rgba(255, 190, 56);
+
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                pixels[y * S + x] = ((x + y) % 5 == 0) ? paperShade : paper;
+            }
+        }
+
+        for (int x = 0; x < 4; x++) {
+            for (int y = 0; y < S; y++) {
+                pixels[y * S + x] = paperShade;
+            }
+        }
+
+        for (int x = 12; x < S; x++) {
+            for (int y = 0; y < S; y++) {
+                pixels[y * S + x] = tip;
+            }
+        }
+
+        for (int y = 4; y <= 11; y++) {
+            pixels[y * S + 15] = ember;
+            pixels[y * S + 14] = emberHot;
+        }
+
+        return createTextureFromPixels(pixels);
+    }
+
+    private int generateSmokePuffTexture() {
+        int size = 16;
+        int[] pixels = new int[size * size];
+        int centerX = size / 2;
+        int centerY = size / 2;
+
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                float dx = (x - centerX) / 6.5f;
+                float dy = (y - centerY) / 6.5f;
+                float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                float alpha = Math.max(0f, 1f - dist);
+                alpha = alpha * alpha * 0.55f;
+                int a = (int) (alpha * 255f);
+                int shade = 190 + (int) (35f * (1f - alpha));
+                pixels[y * size + x] = (a << 24) | (shade << 16) | (shade << 8) | shade;
+            }
+        }
+
+        return createTextureFromPixels(pixels, size, size);
     }
 
     private int generatePlayerLegsTexture() {
@@ -11587,10 +11951,11 @@ public class ChernobylGameCore {
             currentGroundLevel = hallFloorWorld;
         }
 
-        float reactorStairGround = getReactorHallStairGround(px, pz);
-        if (!Float.isNaN(reactorStairGround)) {
-            currentGroundLevel = Math.max(currentGroundLevel, reactorStairGround);
-        }
+        // DISABLED: Stair ground teleportation was pushing player up when under stairs
+        // float reactorStairGround = getReactorHallStairGround(px, pz);
+        // if (!Float.isNaN(reactorStairGround)) {
+        //     currentGroundLevel = Math.max(currentGroundLevel, reactorStairGround);
+        // }
 
         if (inReactorHall) {
             float catwalkGround = getReactorHallCatwalkGround(px, pz, cameraPos.y);
@@ -11634,6 +11999,49 @@ public class ChernobylGameCore {
         if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) hotbarSelectedSlot = 6;
         if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) hotbarSelectedSlot = 7;
         if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) hotbarSelectedSlot = 8;
+
+        boolean cigaretteSelected = isCigaretteEquipped();
+        boolean tabNow = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
+        if (cigaretteSelected) {
+            if (tabNow && !cigaretteTabHeld) {
+                cigaretteLit = !cigaretteLit;
+                cigaretteCycleTimer = 0f;
+                cigaretteSmokeEmitTimer = 0f;
+                if (!cigaretteLit) {
+                    cigaretteSmokeParticles.clear();
+                }
+            }
+            cigaretteTabHeld = tabNow;
+        } else {
+            cigaretteTabHeld = false;
+        }
+
+        if (!cigaretteSelected) {
+            cigaretteSmokeEmitTimer = 0f;
+        }
+
+        if (cigaretteLit && cigaretteSelected) {
+            cigaretteCycleTimer += deltaTime;
+            float puffPhase = cigaretteCycleTimer % 2.6f;
+            float emitInterval;
+            if (puffPhase < 0.32f) {
+                emitInterval = 0.045f;
+            } else if (puffPhase < 1.05f) {
+                emitInterval = 0.11f;
+            } else if (puffPhase < 1.75f) {
+                emitInterval = 0.18f;
+            } else {
+                emitInterval = 0.26f;
+            }
+
+            cigaretteSmokeEmitTimer += deltaTime;
+            while (cigaretteSmokeEmitTimer >= emitInterval) {
+                cigaretteSmokeEmitTimer -= emitInterval;
+                spawnCigaretteSmokePuff(puffPhase);
+            }
+        }
+
+        updateCigaretteSmoke(deltaTime);
 
         boolean radioEquipped = hotbarSelectedSlot >= 0
             && hotbarSelectedSlot < HOTBAR_ITEMS.length
@@ -11849,6 +12257,65 @@ public class ChernobylGameCore {
         progress = Math.max(0f, Math.min(1f, progress));
         float stairY = REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
         return GROUND_LEVEL + stairY;
+    }
+
+    // Check if player collides with stair structure (prevents passing through from underneath)
+    private boolean checkStairStructureCollision(float x, float y, float z, float playerRadius, float playerHeight) {
+        float PR = playerRadius;
+        float playerBottom = y - playerHeight * 0.5f;
+        float playerTop = y + playerHeight * 0.5f;
+
+        float halfWidth = REACTOR_HALL_STAIRS_WIDTH / 2f + BLOCK_SIZE * 0.3f;
+        float totalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
+        boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
+
+        if (runAlongX) {
+            float minZ = REACTOR_HALL_STAIRS_BASE_Z - halfWidth;
+            float maxZ = REACTOR_HALL_STAIRS_BASE_Z + halfWidth;
+            if (z + PR < minZ || z - PR > maxZ) return false;
+
+            float topX = REACTOR_HALL_STAIRS_BASE_X;
+            float bottomX = topX + REACTOR_HALL_STAIRS_DIR_X * totalRun;
+            float minX = Math.min(topX, bottomX) - BLOCK_SIZE * 0.4f;
+            float maxX = Math.max(topX, bottomX) + BLOCK_SIZE * 0.4f;
+            if (x + PR < minX || x - PR > maxX) return false;
+
+            // Calculate which stair step the player is under
+            float signedRun = REACTOR_HALL_STAIRS_DIR_X * totalRun;
+            float progress = signedRun != 0f ? (x - topX) / signedRun : 0f;
+            progress = Math.max(0f, Math.min(1f, progress));
+            float stairBottomY = GROUND_LEVEL + REACTOR_HALL_STAIRS_BASE_Y;
+            float stairTopY = GROUND_LEVEL + REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
+
+            // Collision if player overlaps with stair's solid volume
+            if (playerTop > stairBottomY && playerBottom < stairTopY) {
+                return true;
+            }
+        } else {
+            float minX = REACTOR_HALL_STAIRS_BASE_X - halfWidth;
+            float maxX = REACTOR_HALL_STAIRS_BASE_X + halfWidth;
+            if (x + PR < minX || x - PR > maxX) return false;
+
+            float topZ = REACTOR_HALL_STAIRS_BASE_Z;
+            float bottomZ = topZ + REACTOR_HALL_STAIRS_DIR_Z * totalRun;
+            float minZ = Math.min(topZ, bottomZ) - BLOCK_SIZE * 0.4f;
+            float maxZ = Math.max(topZ, bottomZ) + BLOCK_SIZE * 0.4f;
+            if (z + PR < minZ || z - PR > maxZ) return false;
+
+            // Calculate which stair step the player is under
+            float signedRun = REACTOR_HALL_STAIRS_DIR_Z * totalRun;
+            float progress = signedRun != 0f ? (z - topZ) / signedRun : 0f;
+            progress = Math.max(0f, Math.min(1f, progress));
+            float stairBottomY = GROUND_LEVEL + REACTOR_HALL_STAIRS_BASE_Y;
+            float stairTopY = GROUND_LEVEL + REACTOR_HALL_STAIRS_BASE_Y + (REACTOR_HALL_MEZZANINE_Y - REACTOR_HALL_STAIRS_BASE_Y) * progress;
+
+            // Collision if player overlaps with stair's solid volume
+            if (playerTop > stairBottomY && playerBottom < stairTopY) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private float getReactorHallCatwalkGround(float px, float pz, float currentY) {
@@ -12130,6 +12597,11 @@ public class ChernobylGameCore {
 
         } else {
             // Outside all known zones - solid wall
+            return true;
+        }
+
+        // === STAIR STRUCTURE COLLISION (prevents passing through from underneath) ===
+        if (checkStairStructureCollision(x, y, z, PR, PLAYER_HEIGHT)) {
             return true;
         }
 
@@ -12416,6 +12888,9 @@ public class ChernobylGameCore {
                 float baseZ = cameraPos.z;
 
                 float swingAngle = (float) Math.sin(walkAnimPhase) * 0.6f; // ~34 degrees max
+                float cigarettePuffBlend = getCigarettePuffBlend();
+                float cigaretteRestBlend = getCigaretteRestBlend();
+                boolean cigaretteEquipped = isCigaretteEquipped();
 
                 // Pivot heights (from base/feet)
                 float legPivotY = 55f;   // top of legs (hip)
@@ -12478,16 +12953,53 @@ public class ChernobylGameCore {
                 playerLeftArm.mesh.render();
 
                 // --- Right Arm (opposite to right leg = same as left leg) ---
-                model.identity()
-                    .translate(baseX, baseY + armPivotY, baseZ)
-                    .rotateY(rotAngle)
-                    .translate(playerRightArm.position.x, 0, 0)
-                    .rotateX(swingAngle)
-                    .translate(0, -playerRightArm.scale.y/2, 0)
-                    .scale(playerRightArm.scale);
-                glUniformMatrix4fv(modelLoc, false, model.get(fb));
-                glBindTexture(GL_TEXTURE_2D, playerRightArm.textureId);
-                playerRightArm.mesh.render();
+                if (cigaretteEquipped) {
+                    // Single smoking arm: starts at shoulder and reaches the mouth.
+                    model.identity()
+                        .translate(baseX, baseY + armPivotY, baseZ)
+                        .rotateY(rotAngle)
+                        .translate(playerRightArm.position.x, 0f, 0f)
+                        .rotateX(-1.46f - 0.02f * cigarettePuffBlend + 0.02f * cigaretteRestBlend)
+                        .rotateZ(-0.62f + 0.03f * cigarettePuffBlend)
+                        .translate(0, -playerRightArm.scale.y * 0.39f, 0)
+                        .scale(playerRightArm.scale.x, playerRightArm.scale.y * 0.82f, playerRightArm.scale.z);
+                    glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                    glBindTexture(GL_TEXTURE_2D, playerRightArm.textureId);
+                    playerRightArm.mesh.render();
+                } else {
+                    model.identity()
+                        .translate(baseX, baseY + armPivotY, baseZ)
+                        .rotateY(rotAngle)
+                        .translate(playerRightArm.position.x, 0, 0)
+                        .rotateX(swingAngle)
+                        .translate(0, -playerRightArm.scale.y/2, 0)
+                        .scale(playerRightArm.scale);
+                    glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                    glBindTexture(GL_TEXTURE_2D, playerRightArm.textureId);
+                    playerRightArm.mesh.render();
+                }
+
+                if (cigaretteEquipped) {
+                    Integer cigTex = blockTextures.get("cigarette_item");
+                    if (cigTex != null) {
+                        Vector3f cigDir = getThirdPersonCigaretteDirection(cigarettePuffBlend, cigaretteRestBlend);
+                        float cigYaw = (float) Math.atan2(cigDir.z, cigDir.x);
+                        float cigTilt = (float) Math.atan2(cigDir.y, Math.sqrt(cigDir.x * cigDir.x + cigDir.z * cigDir.z));
+                        Vector3f cigStart = getThirdPersonCigaretteStart(cigarettePuffBlend, cigaretteRestBlend);
+
+                        glUniform1i(fullBrightLoc, 1);
+                        model.identity()
+                            .translate(cigStart)
+                            .rotateY(cigYaw)
+                            .rotateZ(-cigTilt + 0.03f + 0.05f * cigarettePuffBlend)
+                            .translate(6.5f, 0f, 0f)
+                            .scale(13f, 4.6f, 4.6f);
+                        glUniformMatrix4fv(modelLoc, false, model.get(fb));
+                        glBindTexture(GL_TEXTURE_2D, cigTex);
+                        texturedCubeMesh.render();
+                        glUniform1i(fullBrightLoc, 0);
+                    }
+                }
             }
 
             // --- Dedicated NPC render pass ---
@@ -12641,6 +13153,8 @@ public class ChernobylGameCore {
                 
                 obj.mesh.render();
             }
+
+            renderCigaretteSmokeParticles();
             
             glDepthMask(true); // Re-enable depth writing
         }
@@ -12827,6 +13341,22 @@ public class ChernobylGameCore {
             this.point = point;
             this.normal = normal;
             this.distance = distance;
+        }
+    }
+
+    static class SmokeParticle {
+        Vector3f position;
+        Vector3f velocity;
+        float life;
+        float maxLife;
+        float size;
+
+        SmokeParticle(Vector3f position, Vector3f velocity, float life, float size) {
+            this.position = new Vector3f(position);
+            this.velocity = new Vector3f(velocity);
+            this.life = life;
+            this.maxLife = life;
+            this.size = size;
         }
     }
     
