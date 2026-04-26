@@ -884,6 +884,14 @@ public class ChernobylGameCore {
     private int sfxUiSource = 0;
     private int sfxTypeSource = 0;
     private int sfxTalkSource = 0;
+    // NEW: Dramatic sound effects
+    private int sfxAlarmBuffer = 0;
+    private int sfxWarningBuffer = 0;
+    private int sfxTensionBuffer = 0;
+    private int sfxExplosionBuffer = 0;
+    private int sfxDramaticBuffer = 0;
+    private int sfxAlarmSource = 0;
+    private int sfxDramaSource = 0;
     private List<Path> musicPlaylist = new ArrayList<>();
     private int currentMusicIndex = -1;
     private boolean radioNextTrackPressed = false;
@@ -1206,6 +1214,13 @@ public class ChernobylGameCore {
         sfxTalkBuffers[1] = createChatterBuffer(260f, 0.16f, 0.26f);
         sfxTalkBuffers[2] = createChatterBuffer(300f, 0.2f, 0.24f);
 
+        // NEW: Dramatic sound effects
+        sfxAlarmBuffer = createAlarmBuffer(400f, 200f, 0.8f); // Dual-tone alarm
+        sfxWarningBuffer = createWarningBeep(350f, 0.5f, 0.6f);
+        sfxTensionBuffer = createTensionRiser(80f, 1.2f, 0.5f); // Ascending tension
+        sfxExplosionBuffer = createExplosionSound(); // Explosive burst
+        sfxDramaticBuffer = createDramaticSting(); // Dramatic hit
+
         sfxUiSource = alGenSources();
         alSourcei(sfxUiSource, AL_BUFFER, sfxClickBuffer);
         alSourcei(sfxUiSource, AL_LOOPING, AL_FALSE);
@@ -1216,6 +1231,13 @@ public class ChernobylGameCore {
 
         sfxTalkSource = alGenSources();
         alSourcei(sfxTalkSource, AL_LOOPING, AL_FALSE);
+
+        // NEW: Sources for dramatic audio
+        sfxAlarmSource = alGenSources();
+        alSourcei(sfxAlarmSource, AL_LOOPING, AL_FALSE);
+        
+        sfxDramaSource = alGenSources();
+        alSourcei(sfxDramaSource, AL_LOOPING, AL_FALSE);
     }
 
     private int createToneBuffer(float frequency, float durationSeconds, float amplitude) {
@@ -1302,6 +1324,116 @@ public class ChernobylGameCore {
         alSourcei(sfxTalkSource, AL_BUFFER, buffer);
         alSourcef(sfxTalkSource, AL_PITCH, 0.9f + sfxRng.nextFloat() * 0.3f);
         alSourcePlay(sfxTalkSource);
+    }
+
+    // === NEW: DRAMATIC SOUND EFFECTS ===
+    private int createAlarmBuffer(float freq1, float freq2, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = (int) (0.6f * sampleRate); // 0.6 second alarm
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double mod = Math.sin(2.0 * Math.PI * 3.5 * t); // 3.5 Hz wobble
+            double freq = mod > 0 ? freq1 : freq2;
+            double sample = Math.sin(2.0 * Math.PI * freq * t) * amplitude * 0.8;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createWarningBeep(float frequency, float durationSeconds, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = (int) (durationSeconds * sampleRate);
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double env = Math.exp(-8.0 * t);
+            double sample = Math.sin(2.0 * Math.PI * frequency * t) * amplitude * env;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createTensionRiser(float startFreq, float durationSeconds, float amplitude) {
+        int sampleRate = 44100;
+        int totalSamples = (int) (durationSeconds * sampleRate);
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            double progress = t / durationSeconds;
+            double freq = startFreq + progress * 220.0; // Rising frequency
+            double sample = Math.sin(2.0 * Math.PI * freq * t) * amplitude;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createExplosionSound() {
+        int sampleRate = 44100;
+        int totalSamples = (int) (2.5f * sampleRate); // 2.5 seconds
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        java.util.Random rand = new java.util.Random(12345);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            // Explosive burst of noise + low frequency
+            double noise = (rand.nextDouble() - 0.5) * 2.0;
+            double lowFreq = Math.sin(2.0 * Math.PI * 60.0 * t) * 0.6;
+            double env = Math.exp(-2.0 * t); // Quick fade
+            double sample = (noise * 0.5 + lowFreq * 0.5) * env * 0.9;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private int createDramaticSting() {
+        int sampleRate = 44100;
+        int totalSamples = (int) (0.8f * sampleRate); // 0.8 seconds
+        ShortBuffer pcm = MemoryUtil.memAllocShort(totalSamples);
+        for (int i = 0; i < totalSamples; i++) {
+            double t = i / (double) sampleRate;
+            // Two notes: 220 Hz then 330 Hz (musical interval)
+            double freq = t < 0.4 ? 220.0 : 330.0;
+            double env = Math.exp(-3.0 * (t % 0.4));
+            double sample = Math.sin(2.0 * Math.PI * freq * t) * env * 0.8;
+            pcm.put((short) (sample * Short.MAX_VALUE));
+        }
+        pcm.flip();
+        int buffer = alGenBuffers();
+        alBufferData(buffer, AL_FORMAT_MONO16, pcm, sampleRate);
+        MemoryUtil.memFree(pcm);
+        return buffer;
+    }
+
+    private void playSfxAlarm() {
+        if (!audioInitialized || !soundEnabled || sfxAlarmSource == 0 || sfxAlarmBuffer == 0) return;
+        alSourceStop(sfxAlarmSource);
+        alSourcei(sfxAlarmSource, AL_BUFFER, sfxAlarmBuffer);
+        alSourcef(sfxAlarmSource, AL_GAIN, 0.7f);
+        alSourcePlay(sfxAlarmSource);
+    }
+
+    private void playSfxDrama(int bufferToPlay) {
+        if (!audioInitialized || !soundEnabled || sfxDramaSource == 0 || bufferToPlay == 0) return;
+        alSourceStop(sfxDramaSource);
+        alSourcei(sfxDramaSource, AL_BUFFER, bufferToPlay);
+        alSourcef(sfxDramaSource, AL_GAIN, 0.6f);
+        alSourcePlay(sfxDramaSource);
     }
 
     private int findGamepad() {
@@ -3404,39 +3536,42 @@ public class ChernobylGameCore {
             case 1:
                 storyTime = "25 APRIL 1986 - 23:15";
                 currentObjective = "CLICK CONTROL PANEL - INSERT RODS (RIGHT-CLICK) TO LOWER POWER TO 700";
-                showNotification("GO TO CONTROL PANEL (CLICK) - RIGHT-CLICK OR RIGHT ARROW TO INSERT RODS");
+                showNotification("POWER RISING! AKIMOV ASSIGNS YOU TO THE CONTROL PANEL");
                 break;
             case 2:
                 storyTime = "25 APRIL 1986 - 23:40";
                 currentObjective = "OPEN INDICATOR PANELS (RIGHT WALL) - CALIBRATE GAUGES AND CHECK TRENDS";
-                showNotification("POWER REDUCED! WALK TO RIGHT WALL INDICATORS - PRESS E TO OPEN!");
+                showNotification("POWER REDUCED! CHECK THE INDICATOR PANELS - STABILITY DEPENDS ON YOUR VIGILANCE");
                 break;
             case 3:
                 storyTime = "26 APRIL 1986 - 00:05";
                 currentObjective = "OPEN ELENA DISPLAY (CLICK) - SCAN 3+ SECTORS TO CHECK XENON LEVELS";
-                showNotification("XENON DETECTED! GO TO ELENA DISPLAY (BACK WALL) - X TO OPEN - CLICK TO SCAN!");
+                showNotification("XENON BUILDUP DETECTED! SCAN ELENA CORE - LOOK FOR ORANGE HOT SPOTS");
+                playSfxDrama(sfxWarningBuffer); // Warning sound
                 elenaScanCount = 0; // Reset scan count for this phase
                 break;
             case 4:
                 storyTime = "26 APRIL 1986 - 00:28";
                 currentObjective = "WARNING! TALK TO AKIMOV (PRESS T) ABOUT THE XENON CRISIS!";
-                showNotification("XENON CRISIS CONFIRMED ON ELENA! FIND AKIMOV AND PRESS T!");
+                showNotification("XENON POISON WORSENS - FIND AKIMOV IMMEDIATELY");
+                playSfxDrama(sfxAlarmBuffer); // Alarm sound
                 break;
             case 5:
                 storyTime = "26 APRIL 1986 - 00:43";
                 currentObjective = "OPEN PANEL (E) - LEFT-CLICK RODS TO WITHDRAW - RAISE POWER ABOVE 400";
-                showNotification("DYATLOV ORDERS: WITHDRAW RODS (LEFT-CLICK/LEFT ARROW) TO RAISE POWER!");
+                showNotification("DYATLOV DEMANDS ACTION - WITHDRAW RODS TO RESTORE POWER");
+                playSfxDrama(sfxTensionBuffer); // Tension riser
                 break;
             case 6:
                 storyTime = "26 APRIL 1986 - 01:00";
                 currentObjective = "SCAN ELENA (5+ SECTORS) THEN DISCONNECT TURBINE AT CONTROL PANEL";
-                showNotification("GO TO ELENA - SCAN 5+ SECTORS TO CONFIRM - THEN DISCONNECT TURBINE!");
-                elenaScanCount = 0; // Reset scan count for this phase
+                showNotification("TURBINE DISCONNECT IMMINENT - SCAN ELENA FIRST TO CONFIRM REACTOR STATE");
                 break;
             case 7:
                 storyTime = "26 APRIL 1986 - 01:23";
                 currentObjective = "RIGHT-CLICK RODS TO INSERT (30+) THEN PRESS SPACE FOR AZ-5!";
-                showNotification("DANGER! INSERT RODS (30+) THEN PRESS SPACE - AZ-5 MAY NOT SAVE YOU!");
+                showNotification("POWER SURGE DETECTED! INSERT RODS THEN ACTIVATE AZ-5!");
+                playSfxDrama(sfxAlarmBuffer); // Alarm
                 break;
             case 8:
                 storyTime = "26 APRIL 1986 - 01:23:40";
@@ -3447,6 +3582,7 @@ public class ChernobylGameCore {
                 storyTime = "26 APRIL 1986 - 01:23:45";
                 currentObjective = "";
                 showNotification("THE REACTOR EXPLODES.");
+                playSfxDrama(sfxExplosionBuffer); // Explosion
                 break;
         }
     }
@@ -3463,151 +3599,273 @@ public class ChernobylGameCore {
                     storyPhase = 1;
                     advanceStory();
                     return new String[]{
-                        "Ah, you must be the new engineer assigned",
-                        "to observe tonight's safety test.",
+                        "Ah, you must be the new engineer.",
+                        "Welcome to Unit Four.",
                         "",
-                        "I am Alexander Akimov, shift supervisor.",
-                        "Tonight we conduct a turbine rundown test",
-                        "on Reactor Number Four.",
+                        "I am Alexander Akimov,",
+                        "shift supervisor.",
                         "",
-                        "Deputy Chief Engineer Dyatlov has ordered",
-                        "this test. We must determine how long the",
-                        "turbines can power the coolant pumps during",
-                        "a station blackout.",
+                        "My daughter started school",
+                        "three weeks ago. Smart girl.",
+                        "I promised I would be home",
+                        "early tonight to help with",
+                        "her studies.",
                         "",
-                        "Go speak with Toptunov at the reactor",
-                        "console. He will brief you on the reactor",
-                        "status. He is near the ELENA display."
+                        "But Dyatlov has ordered",
+                        "a safety test. A turbine",
+                        "rundown test. We must verify",
+                        "how long the emergency pumps",
+                        "can cool the reactor if the",
+                        "external power dies.",
+                        "",
+                        "It should be routine. An RBMK",
+                        "reactor cannot explode.",
+                        "The design is inherently safe.",
+                        "",
+                        "But tonight... something",
+                        "feels different.",
+                        "",
+                        "Go speak with Toptunov.",
+                        "He is at the reactor console",
+                        "near the ELENA display.",
+                        "He will brief you."
                     };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
-                        "What are you standing around for?",
-                        "This test will be completed tonight.",
-                        "Go speak with Akimov. He will brief",
-                        "you. Do not waste my time."
+                        "You. New engineer.",
+                        "Listen carefully.",
+                        "",
+                        "This test WILL proceed",
+                        "tonight. No delays.",
+                        "Moscow expects results.",
+                        "",
+                        "The Party does not accept",
+                        "excuses. If you cannot handle",
+                        "this simple task, we will find",
+                        "someone who can.",
+                        "",
+                        "Go to Akimov. He will",
+                        "brief you. Then report",
+                        "to Toptunov at the console.",
+                        "",
+                        "And engineer... remember",
+                        "every action has consequences.",
+                        "Professional consequences."
                     };
                 } else if (npcName.equals("Perevozchenko")) {
                     return new String[]{
-                        "Comrade, I am Valery Perevozchenko,",
-                        "reactor section foreman.",
+                        "Evening, comrade. I am Valery",
+                        "Perevozchenko. Reactor hall",
+                        "foreman.",
                         "",
-                        "I oversee the reactor hall - the room",
-                        "with the fuel channels. If you need",
-                        "anything about the reactor itself,",
-                        "come find me in hall 2.",
+                        "You will see many systems",
+                        "tonight. The reactor hall",
+                        "is my responsibility.",
                         "",
-                        "But first, speak with Akimov.",
-                        "He is expecting you."
+                        "The fuel channels descend",
+                        "into the core below. Each",
+                        "channel is sealed, cooled,",
+                        "monitored.",
+                        "",
+                        "Twenty years I have overseen",
+                        "this reactor. Never have I seen",
+                        "strange things.",
+                        "",
+                        "But tonight... I have a",
+                        "feeling we should be cautious.",
+                        "",
+                        "First, speak with Akimov.",
+                        "He will explain the test."
+                    };
+                } else if (npcName.equals("Toptunov")) {
+                    return new String[]{
+                        "Hello, comrade. I am Leonid",
+                        "Toptunov, senior reactor",
+                        "control engineer.",
+                        "",
+                        "I was born in Pripyat.",
+                        "This reactor powers my home.",
+                        "I am twenty-one years old.",
+                        "",
+                        "This will be my first time",
+                        "observing a major safety test.",
+                        "I am nervous, if honest.",
+                        "",
+                        "But Akimov is the best.",
+                        "Everything will be fine.",
+                        "",
+                        "Speak with Akimov first.",
+                        "He will explain what we must do."
                     };
                 } else {
                     return new String[]{
-                        "Not now, comrade. Akimov wants to",
-                        "see you first. He is by the indicator",
-                        "panels."
+                        "Go speak with Akimov.",
+                        "He is the shift supervisor.",
+                        "He will brief the new engineer."
                     };
                 }
             case 1:
                 if (npcName.equals("Toptunov")) {
-                    // Don't auto-advance - player must use control panel to reduce power
                     return new String[]{
-                        "Hello, comrade. I am Leonid Toptunov,",
-                        "senior reactor control engineer.",
+                        "The reactor is climbing to 1600 MW.",
+                        "Unstable. We need it down to 700.",
                         "",
-                        "The reactor is running at 1600 MW but",
-                        "climbing! We need it down to 700.",
+                        "Walk to the CONTROL PANEL.",
+                        "Press E to interact with it.",
                         "",
-                        "Walk to the CONTROL PANEL and click it.",
-                        "Then RIGHT-CLICK (or RIGHT arrow) on",
-                        "CONTROL RODS to INSERT them.",
+                        "Then RIGHT-CLICK the control rods",
+                        "(or use RIGHT arrow) to INSERT them.",
                         "",
-                        "More rods inserted = less power.",
-                        "Be careful not to go too low!"
+                        "Inserting rods reduces power.",
+                        "Each rod drops the reaction.",
+                        "But we cannot go too low or",
+                        "xenon poisoning will trap us.",
+                        "",
+                        "Be methodical. Precise.",
+                        "Bring us to 700 MW."
                     };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
-                        "Why are you standing around? Go to",
-                        "the control panel and begin the",
-                        "power reduction! Press E near it.",
-                        "We do not have all night."
+                        "Move faster!",
+                        "The test is behind schedule already.",
+                        "",
+                        "Go to the control panel.",
+                        "Insert the rods NOW.",
+                        "700 megawatts. That is the target.",
+                        "",
+                        "I do not care how you achieve it.",
+                        "Just do it."
+                    };
+                } else if (npcName.equals("Akimov")) {
+                    return new String[]{
+                        "Good. Toptunov will guide you",
+                        "through the rod insertion.",
+                        "",
+                        "The control panel responds to",
+                        "each command instantly.",
+                        "Very responsive. Sometimes",
+                        "too responsive.",
+                        "",
+                        "Once you stabilize at 700,",
+                        "return to me for the next phase."
                     };
                 } else {
                     return new String[]{
-                        "The control panel is ahead of you.",
-                        "Press E when near it to interact.",
-                        "We need to lower the reactor power."
+                        "The control panel is ahead.",
+                        "Toptunov will explain the rods."
                     };
                 }
             case 2:
                 // Indicator verification phase
                 if (npcName.equals("Toptunov")) {
                     return new String[]{
-                        "Good, the power is coming down.",
+                        "Good. Power is stabilizing.",
                         "",
-                        "Go check the INDICATOR PANELS on",
-                        "the RIGHT WALL. Press E to open.",
+                        "Now go to the INDICATOR PANELS",
+                        "on the RIGHT WALL.",
+                        "Press E to open them.",
                         "",
-                        "The instruments drift over time -",
+                        "The instruments drift over time.",
+                        "They need regular calibration.",
+                        "",
                         "LEFT-CLICK each gauge to calibrate.",
-                        "RIGHT-CLICK to acknowledge alarms.",
+                        "RIGHT-CLICK to silence alarms.",
                         "",
-                        "Watch the TREND ARROWS to see if",
-                        "values are rising or falling. If",
-                        "you ignore indicators too long,",
-                        "stability drops!"
+                        "Watch the TREND ARROWS.",
+                        "They show if values are rising",
+                        "or falling. If you ignore",
+                        "the indicators too long,",
+                        "reactor stability suffers.",
+                        "",
+                        "Precision is everything now."
                     };
                 } else if (npcName.equals("Akimov")) {
                     return new String[]{
-                        "Check the indicator panels on the",
-                        "right wall. Press E to open them.",
-                        "Calibrate the gauges by clicking",
-                        "and acknowledge any alarms.",
-                        "Keep checking them regularly!"
+                        "The indicator panels will tell",
+                        "the true story of the reactor.",
+                        "",
+                        "Numbers on screens lie sometimes.",
+                        "But these instruments - they are",
+                        "honest. They cannot be fooled.",
+                        "",
+                        "Check them regularly.",
+                        "Very regularly.",
+                        "",
+                        "I have a strange feeling tonight.",
+                        "Like the reactor is waiting",
+                        "for something."
+                    };
+                } else if (npcName.equals("Dyatlov")) {
+                    return new String[]{
+                        "Hurry with those calibrations!",
+                        "The test window is closing.",
+                        "",
+                        "Once we disconnect the turbine,",
+                        "there is no turning back.",
+                        "",
+                        "Make sure everything is ready."
                     };
                 } else {
                     return new String[]{
                         "Akimov wants you to verify the",
                         "indicator readings. The panels",
-                        "are on the right wall. Press E."
+                        "are on the right wall."
                     };
                 }
             case 3:
                 // NEW: ELENA scan phase
                 if (npcName.equals("Toptunov")) {
                     return new String[]{
-                        "Good, the indicators check out.",
+                        "The indicators check out.",
                         "",
-                        "Now we need to check the ELENA",
-                        "display. Walk to it and press E.",
+                        "But now we must check ELENA.",
+                        "It shows the neutron flux in",
+                        "each sector of the core.",
                         "",
-                        "ELENA shows the neutron flux in",
-                        "each sector of the core. Scan at",
-                        "least 3 sectors by clicking on them.",
+                        "Walk to the ELENA display.",
+                        "Press E to open it.",
                         "",
-                        "Look for XENON HOT SPOTS - they",
-                        "glow ORANGE on the display. Each",
-                        "scan you do improves stability.",
+                        "Click on sectors to scan them.",
+                        "You need to scan at least",
+                        "three sectors.",
                         "",
-                        "Do NOT skip this! If you neglect",
-                        "ELENA the reactor gets worse faster."
+                        "Look for ORANGE HOT SPOTS.",
+                        "Those are xenon-135 buildup.",
+                        "Dangerous concentration.",
+                        "",
+                        "Each scan you perform",
+                        "improves reactor stability.",
+                        "But if you ignore ELENA...",
+                        "the xenon will trap us."
                     };
                 } else if (npcName.equals("Akimov")) {
                     return new String[]{
-                        "Go to the ELENA display and scan",
-                        "the core sectors. We need to know",
-                        "the xenon distribution before the",
-                        "test can continue.",
+                        "ELENA is the core monitoring",
+                        "system. The most advanced",
+                        "instrument we have.",
                         "",
-                        "Scan thoroughly - the more sectors",
-                        "you check the better our stability."
+                        "I trust ELENA more than",
+                        "I trust myself sometimes.",
+                        "",
+                        "Scan the sectors. Observe",
+                        "the xenon distribution.",
+                        "Report to me immediately",
+                        "if you see anything unusual."
+                    };
+                } else if (npcName.equals("Dyatlov")) {
+                    return new String[]{
+                        "Stop delaying!",
+                        "Check ELENA and move on.",
+                        "We have a test to conduct.",
+                        "",
+                        "The turbine rundown cannot",
+                        "wait forever. Tick-tock."
                     };
                 } else {
                     return new String[]{
-                        "ELENA is the large display near",
-                        "the back wall. Press E to open it",
-                        "and click sectors to scan them.",
-                        "",
-                        "Watch for orange hot spots - those",
-                        "are xenon-135 danger zones."
+                        "ELENA is near the back wall.",
+                        "The large display with",
+                        "the colored grid. SCAN IT."
                     };
                 }
             case 4:
@@ -3618,69 +3876,160 @@ public class ChernobylGameCore {
                     xenonLevel = 80f;
                     reactorPower = 30f;
                     showMachineLog("XENON-135 BUILDUP CRITICAL!");
+                    playSfxDrama(sfxAlarmBuffer);
                     return new String[]{
-                        "Comrade, we have a serious problem!",
+                        "Comrade... we have a serious problem.",
                         "",
-                        "Xenon-135 has poisoned the reactor!",
+                        "Xenon-135 has poisoned the reactor.",
                         "Power has collapsed to almost zero.",
+                        "We are at 30 MW. Falling.",
                         "",
-                        "Dyatlov demands we raise power NOW.",
-                        "Go to the CONTROL PANEL (press E).",
+                        "This is not supposed to happen.",
+                        "I have been supervisor for five years.",
+                        "Never have I seen xenon poison",
+                        "so fast.",
+                        "",
+                        "Dyatlov will demand we raise power.",
+                        "But we must insert 30 rods minimum",
+                        "or the reactor becomes unstable.",
+                        "",
+                        "If we go below 30 rods...",
+                        "the void coefficient becomes",
+                        "a problem. A serious problem.",
+                        "",
+                        "Go to the CONTROL PANEL.",
                         "LEFT-CLICK rods to WITHDRAW them.",
+                        "We must get power back above 400 MW.",
                         "",
-                        "We need power back ABOVE 400 MW!",
-                        "WARNING: Keep at least 30 rods in",
-                        "or the reactor becomes unstable!"
+                        "But engineer... I want you to remember",
+                        "this moment. Remember what I said.",
+                        "About 30 rods. Please. Remember."
                     };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
-                        "The power dropped? Incompetence!",
-                        "Toptunov cannot handle a simple",
-                        "power reduction!",
+                        "Power is down to 30?",
+                        "INCOMPETENCE!",
                         "",
-                        "The xenon will kill the reactor if",
-                        "you do not act. Wait for my orders."
+                        "Toptunov cannot manage",
+                        "a simple power reduction!",
+                        "",
+                        "The xenon will poison the",
+                        "reactor for days. We will",
+                        "never complete the test.",
+                        "",
+                        "I do not care about your fears.",
+                        "I do not care about safety",
+                        "regulations. Moscow expects",
+                        "this test TONIGHT.",
+                        "",
+                        "You will raise power.",
+                        "You will run the test.",
+                        "And the reactor WILL NOT fail.",
+                        "",
+                        "That is an order."
+                    };
+                } else if (npcName.equals("Perevozchenko")) {
+                    return new String[]{
+                        "I heard about the power drop.",
+                        "",
+                        "Xenon poisoning. That is very",
+                        "dangerous at low power.",
+                        "",
+                        "In the reactor hall I can hear",
+                        "something strange tonight.",
+                        "A sound I have never heard before.",
+                        "Like the core is... calling."
+                    };
+                } else if (npcName.equals("Toptunov")) {
+                    return new String[]{
+                        "I... I made a mistake.",
+                        "The power dropped too low.",
+                        "",
+                        "The xenon absorbed all the",
+                        "neutrons. Power cascaded down.",
+                        "",
+                        "I do not know how to stop it.",
+                        "I am only twenty-one.",
+                        "I was not trained for this."
                     };
                 } else {
                     return new String[]{
-                        "I... I made a mistake. The power",
-                        "dropped too low. The xenon is building.",
-                        "We must wait and see what happens."
+                        "Something has gone wrong.",
+                        "Power is collapsing. Find Akimov!"
                     };
                 }
             case 5:
                 if (npcName.equals("Toptunov")) {
-                    // Don't auto-advance - player must withdraw rods in control panel
                     return new String[]{
                         "The situation is critical, comrade!",
                         "",
                         "Xenon-135 has poisoned the reactor.",
                         "Dyatlov demands we raise the power.",
                         "",
-                        "Open the CONTROL PANEL (press E) and",
+                        "Open the CONTROL PANEL.",
                         "LEFT-CLICK rods to WITHDRAW them.",
                         "We need power above 400 MW!",
                         "",
-                        "WARNING: Regulations say minimum 30",
-                        "rods must stay inserted at all times.",
-                        "Below that the reactor is UNSTABLE!",
+                        "But... regulations say minimum 30",
+                        "rods must stay inserted.",
+                        "Below that the core becomes unstable.",
                         "",
-                        "Do what you must. God help us."
+                        "The void coefficient...",
+                        "if the coolant boils away...",
+                        "",
+                        "Do what you must.",
+                        "I cannot tell you to break the rules.",
+                        "But Moscow demands the test.",
+                        "",
+                        "God help us."
                     };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
-                        "Pull out the rods! All of them if",
-                        "you have to! I need that power up!",
+                        "Pull out the rods! NOW!",
                         "",
-                        "Open the control panel and withdraw",
-                        "those rods NOW. The test proceeds."
+                        "Every second we waste is wasted",
+                        "Party resources. That is treason.",
+                        "",
+                        "I need power back online.",
+                        "The test WILL proceed.",
+                        "",
+                        "I do not care about your",
+                        "precious regulations.",
+                        "Rules are for peacetime.",
+                        "This is about Soviet achievement.",
+                        "",
+                        "WITHDRAW THE RODS."
+                    };
+                } else if (npcName.equals("Akimov")) {
+                    return new String[]{
+                        "Toptunov, are you withdrawing?",
+                        "",
+                        "Once you go below 30 rods...",
+                        "there is no margin for error.",
+                        "",
+                        "The void coefficient will become",
+                        "active. If anything goes wrong...",
+                        "",
+                        "Do your best. That is all",
+                        "any of us can do now."
+                    };
+                } else if (npcName.equals("Perevozchenko")) {
+                    return new String[]{
+                        "I know what is happening.",
+                        "Everyone knows. Everyone hears",
+                        "Dyatlov screaming through the halls.",
+                        "",
+                        "Procedures exist for a reason.",
+                        "30 rods is not an arbitrary number.",
+                        "",
+                        "It is physics."
                     };
                 } else {
                     return new String[]{
-                        "I know about the control rods.",
-                        "We are operating outside all safe",
-                        "parameters. But Dyatlov insists.",
-                        "Talk to Toptunov for the details."
+                        "The control panel awaits.",
+                        "Withdraw the rods.",
+                        "Raise the power.",
+                        "Follow orders."
                     };
                 }
             case 6:
@@ -3689,75 +4038,157 @@ public class ChernobylGameCore {
                     return new String[]{
                         "Only " + controlRodsInserted + " control rods remain...",
                         "",
-                        "Before the turbine test, scan ELENA",
-                        "one more time - we need 5+ sectors",
-                        "scanned to confirm core stability.",
+                        "Before the turbine test,",
+                        "scan ELENA one more time.",
                         "",
-                        "Look for PURPLE sectors - those show",
-                        "VOID COEFFICIENT anomalies. If you",
-                        "see them AZ-5 could cause a surge!",
+                        "We need 5+ sectors scanned.",
+                        "Look for PURPLE sectors.",
                         "",
-                        "Then open the CONTROL PANEL (press E).",
-                        "Scroll DOWN to TURBINE then LEFT-CLICK",
-                        "to DISCONNECT it.",
+                        "Those show VOID COEFFICIENT",
+                        "anomalies. If we see them...",
                         "",
-                        "If anything goes wrong after the",
-                        "test... we use the AZ-5 button.",
-                        "God help us all."
+                        "If power surges when AZ-5",
+                        "activates, the graphite tips",
+                        "will be pulled out first.",
+                        "",
+                        "Then the void coefficient",
+                        "will amplify the reaction.",
+                        "An exponential power surge.",
+                        "",
+                        "It is not possible. An RBMK",
+                        "reactor cannot do this.",
+                        "The physics forbids it.",
+                        "",
+                        "But scan ELENA anyway.",
+                        "Then disconnect the turbine",
+                        "at the control panel."
+                    };
+                } else if (npcName.equals("Dyatlov")) {
+                    return new String[]{
+                        "Hurry with ELENA! The test",
+                        "window closes in minutes.",
+                        "",
+                        "Disconnect the turbine.",
+                        "Begin the rundown.",
+                        "",
+                        "This test WILL succeed.",
+                        "We will prove the design",
+                        "is safe to Moscow."
+                    };
+                } else if (npcName.equals("Toptunov")) {
+                    return new String[]{
+                        "We have " + controlRodsInserted + " rods inserted.",
+                        "Below the safety limit.",
+                        "",
+                        "The turbine disconnect",
+                        "comes next. When external",
+                        "power drops, inertia will",
+                        "coast the turbine down.",
+                        "",
+                        "The decay heat will remain.",
+                        "But without coolant pumps...",
+                        "",
+                        "The pumps need turbine power.",
+                        "No turbine = no pump power.",
+                        "= no coolant flow.",
+                        "= rising temperature.",
+                        "",
+                        "This is the test.",
+                        "This is what we must prove."
                     };
                 } else {
                     return new String[]{
-                        "Scan ELENA display first (5 sectors),",
-                        "then disconnect the turbine at the",
-                        "control panel. Click nearby."
+                        "Scan ELENA (5 sectors),",
+                        "then disconnect the turbine",
+                        "at the control panel."
                     };
                 }
             case 7:
                 if (npcName.equals("Akimov")) {
-                    // Don't auto-advance - player must press AZ-5 in control panel
                     return new String[]{
                         "The turbine is spinning down but...",
                         "the power... it is RISING!",
                         "",
-                        "You must press AZ-5! NOW!",
-                        "Open the CONTROL PANEL and press",
-                        "SPACE to activate emergency shutdown!",
+                        "That is impossible!",
+                        "The power should DROP!",
                         "",
-                        "Make sure we have ENOUGH RODS",
-                        "INSERTED (30+) before pressing AZ-5",
-                        "or the graphite tips could cause",
-                        "a POWER SURGE! INSERT RODS FIRST!",
+                        "As the turbine loses speed,",
+                        "the pumps lose power. Coolant",
+                        "boils. Void forms.",
+                        "",
+                        "Positive void coefficient.",
+                        "Each void bubble adds reactivity.",
+                        "Power rises. Voids grow.",
+                        "More power. More voids.",
+                        "Exponential.",
+                        "",
+                        "You must press AZ-5! NOW!",
+                        "Open the CONTROL PANEL.",
+                        "Press SPACE to activate",
+                        "emergency shutdown!",
+                        "",
+                        "Make sure we have enough rods",
+                        "inserted first (30+)",
+                        "or the graphite tips could",
+                        "cause a power surge!",
                         "",
                         "HURRY!"
                     };
+                } else if (npcName.equals("Perevozchenko")) {
+                    playSfxDrama(sfxAlarmBuffer);
+                    return new String[]{
+                        "COMRADE! LISTEN TO ME!",
+                        "",
+                        "I am in the reactor hall!",
+                        "The fuel channel CAPS!",
+                        "They were JUMPING!",
+                        "",
+                        "Bouncing on and off the plugs",
+                        "like something is PUSHING them",
+                        "up from below!",
+                        "",
+                        "I have TWENTY YEARS in this",
+                        "reactor. I have NEVER seen",
+                        "anything like it!",
+                        "",
+                        "The reactor is doing something",
+                        "it SHOULD NOT be doing!",
+                        "",
+                        "You must SHUT IT DOWN!",
+                        "Press AZ-5!",
+                        "BEFORE IT IS TOO LATE!"
+                    };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
-                        "Stop panicking! Everything is under",
-                        "control. We begin the test now.",
-                        "Any more delays and I will have you",
-                        "all replaced. Understood?"
+                        "Impossible! Power is rising?",
+                        "",
+                        "It is a malfunction. The",
+                        "instruments are wrong.",
+                        "",
+                        "Stop panicking! An RBMK",
+                        "reactor is inherently safe.",
+                        "The test will conclude normally.",
+                        "",
+                        "Toptunov, is the test continuing?"
                     };
-                } else if (npcName.equals("Perevozchenko")) {
+                } else if (npcName.equals("Toptunov")) {
                     return new String[]{
-                        "COMRADE! You have to listen to me!",
+                        "SOMETHING IS WRONG!",
+                        "The readings are going CRAZY!",
                         "",
-                        "I was just in the reactor hall -",
-                        "the fuel channel CAPS! They were",
-                        "JUMPING! Bouncing on and off like",
-                        "something is pushing them from below!",
+                        "All parameters are rising!",
                         "",
-                        "I have NEVER seen anything like it!",
-                        "The reactor is doing something it",
-                        "should not be doing!",
+                        "Sir, I believe there is a",
+                        "void coefficient response.",
+                        "The coolant is boiling.",
                         "",
-                        "For God's sake, press AZ-5! SHUT",
-                        "IT DOWN BEFORE IT IS TOO LATE!"
+                        "We need AZ-5 NOW."
                     };
                 } else {
                     return new String[]{
-                        "Something is wrong! The readings",
-                        "are going crazy! Talk to Akimov!",
-                        "NOW!"
+                        "SOMETHING IS WRONG!",
+                        "The readings are going crazy!",
+                        "Talk to Akimov! NOW!"
                     };
                 }
             case 8:
@@ -3767,51 +4198,102 @@ public class ChernobylGameCore {
                     playerWon = false;
                     endingTimer = 8f;
                     endingCountdownActive = true;
+                    playSfxDrama(sfxExplosionBuffer);
                     return new String[]{
                         "EXPLOSION!",
                         "",
-                        "The reactor... it is destroyed.",
-                        "The building... the roof is gone.",
+                        "The reactor...",
+                        "it is destroyed.",
                         "",
-                        "This is not possible. An RBMK",
-                        "reactor cannot explode. It cannot.",
+                        "The building... the roof...",
+                        "is gone.",
                         "",
-                        "I did everything right. I pressed",
-                        "AZ-5. I followed the procedures...",
+                        "This is not possible.",
+                        "An RBMK reactor cannot explode.",
+                        "It CANNOT.",
                         "",
-                        "What have we done?"
+                        "The design is inherently safe.",
+                        "They told us that.",
+                        "They PROMISED us that.",
+                        "",
+                        "I did everything right.",
+                        "I followed the procedures.",
+                        "I pressed AZ-5.",
+                        "I did what I was ordered.",
+                        "",
+                        "What have we done?",
+                        "",
+                        "My daughter...",
+                        "my daughter was waiting",
+                        "for me to come home..."
                     };
                 } else if (npcName.equals("Dyatlov")) {
                     return new String[]{
                         "An RBMK reactor cannot explode.",
-                        "You are delusional. The reactor",
-                        "core is intact. It must be the",
-                        "water tanks that exploded.",
+                        "You are delusional.",
                         "",
-                        "Go to the roof and assess the",
-                        "damage. That is an order."
+                        "The reactor core is intact.",
+                        "It MUST be intact.",
+                        "",
+                        "It was the water tanks.",
+                        "The water tanks exploded.",
+                        "The reactor itself is safe.",
+                        "",
+                        "Do not speak of this.",
+                        "Do not speak of explosions.",
+                        "",
+                        "There was no explosion.",
+                        "Understood?",
+                        "",
+                        "THERE WAS NO EXPLOSION."
                     };
                 } else if (npcName.equals("Perevozchenko")) {
                     return new String[]{
-                        "The reactor hall... it is GONE.",
-                        "The upper biological shield -",
-                        "Elena - it flipped over completely.",
+                        "The reactor hall...",
+                        "it is GONE.",
                         "",
-                        "I saw the fuel channels flying",
-                        "through the air like matchsticks.",
-                        "The graphite... it is everywhere.",
+                        "The biological shield -",
+                        "ELENA - it flipped over.",
+                        "Completely.",
                         "",
-                        "Khodemchuk... Khodemchuk was in",
-                        "the pump room. I cannot find him.",
-                        "I have to go back. I have to try.",
+                        "I saw the fuel channels.",
+                        "Flying through the air.",
+                        "Like matchsticks.",
                         "",
-                        "The radiation... I can taste metal",
-                        "in my mouth. My skin is burning."
+                        "The graphite...",
+                        "it is everywhere.",
+                        "Burning.",
+                        "",
+                        "Khodemchuk... he was",
+                        "in the pump room.",
+                        "I cannot find him.",
+                        "",
+                        "I have to go back.",
+                        "I have to try to find him.",
+                        "",
+                        "The radiation...",
+                        "I can taste metal",
+                        "in my mouth.",
+                        "My skin is burning."
+                    };
+                } else if (npcName.equals("Toptunov")) {
+                    return new String[]{
+                        "I was twenty-one.",
+                        "I was just born in Pripyat.",
+                        "",
+                        "I only wanted to be",
+                        "a good engineer.",
+                        "",
+                        "I did what they told me.",
+                        "I was only following orders.",
+                        "",
+                        "How was I supposed to know?",
+                        "How could I have known?"
                     };
                 } else {
                     return new String[]{
-                        "What happened? What was that sound?",
-                        "The reactor building... look at it!",
+                        "The reactor building...",
+                        "look at it!",
                         "This is not possible..."
                     };
                 }
