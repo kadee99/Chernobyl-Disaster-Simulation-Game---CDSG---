@@ -599,21 +599,7 @@ public class ChernobylGameCore {
     private static final float REACTOR_FENCE_RADIUS = REACTOR_GUARD_RADIUS_BLOCKS * BLOCK_SIZE * 0.8f;
     private static final float REACTOR_FENCE_MARGIN = BLOCK_SIZE * 0.04f;
     private boolean reactorHallDoorOpen = false;       // Door state
-    private static final boolean DEV_CREATIVE_MODE_ENABLED = true;
-    private static final float CREATIVE_RAY_DISTANCE = 12f * BLOCK_SIZE;
-    private static final float CREATIVE_SNAP_STEP = BLOCK_SIZE / 2f;
-    private static final String CREATIVE_SAVE_FILE = "creative_edits.txt";
-    private static final String[] CREATIVE_PALETTE = new String[] {
-        "reactor_wall_white",
-        "soviet_gray_wall",
-        "gray_concrete",
-        "reactor_floor_metal",
-        "reactor_step_metal",
-        "light_blue_concrete",
-        "oak_planks",
-        "fluorescent_light",
-        "glass"
-    };
+
 
     // === STORY SYSTEM ===
     private int storyPhase = 0; // 0=intro, 1=talk to akimov, 2=go to toptunov, 3=test begins, etc.
@@ -644,18 +630,6 @@ public class ChernobylGameCore {
 
     // E-key prompt
     private boolean showInteractPrompt = false;
-    private boolean showDebugGPSOverlay = true; // Temporary on-screen GPS readout
-    private boolean creativeMode = false;
-    private boolean creativeTogglePressed = false;
-    private boolean creativePlacePressed = false;
-    private boolean creativeBreakPressed = false;
-    private boolean creativeClearPressed = false;
-    private boolean creativeNextPressed = false;
-    private boolean creativePrevPressed = false;
-    private int creativePaletteIndex = 0;
-    private List<TexturedGameObject> creativeBlocks = new ArrayList<>();
-    private List<CreativePlacement> savedPlacements = new ArrayList<>();
-    private List<CreativeRemoval> savedRemovals = new ArrayList<>();
 
     // === MACHINE INTERACTION SYSTEM (Phase 2) ===
     private boolean machineUIActive = false;
@@ -917,7 +891,6 @@ public class ChernobylGameCore {
         // Build the scene with textures
         buildControlRoom();
         // buildReactorRoom(); // Disabled - reactor room removed
-        loadCreativeEdits();
         
         // Setup projection matrix
         float aspectRatio = (float) ChernobylGame.WIDTH / ChernobylGame.HEIGHT;
@@ -4660,24 +4633,6 @@ public class ChernobylGameCore {
         drawHUDRect(10, screenH - 50, 420, 45, 0f, 0f, 0f, 0.65f);
         drawHUDText(storyTime, 20, screenH - 38, 2, 1.0f, 0.7f, 0.2f, 1.0f);
 
-        if (showDebugGPSOverlay) {
-            float blockX = cameraPos.x / BLOCK_SIZE;
-            float blockY = cameraPos.y / BLOCK_SIZE;
-            float blockZ = cameraPos.z / BLOCK_SIZE;
-            String gpsText = String.format("GPS  X:%6.2f  Y:%5.2f  Z:%6.2f (blocks)", blockX, blockY, blockZ);
-            String zoneText = "Zone: " + describePlayerLocation(cameraPos.x, cameraPos.z);
-            String compassDir = getCompassHeading(yaw);
-            String compassText = "Compass: " + compassDir + " | N=ELENA (+Z) E=+X";
-            float maxChars = Math.max(gpsText.length(), Math.max(zoneText.length(), compassText.length()));
-            float gpsW = Math.max(320f, maxChars * 8f + 30f);
-            float gpsX = 10f;
-            float gpsY = screenH - 130f;
-            drawHUDRect(gpsX, gpsY, gpsW, 75f, 0f, 0f, 0f, 0.55f);
-            drawHUDText(gpsText, gpsX + 14f, gpsY + 54f, 2, 0.6f, 0.9f, 1f, 1f);
-            drawHUDText(zoneText, gpsX + 14f, gpsY + 32f, 2, 0.9f, 0.75f, 0.3f, 0.95f);
-            drawHUDText(compassText, gpsX + 14f, gpsY + 12f, 2, 0.7f, 0.9f, 0.7f, 0.95f);
-        }
-
         // Top center: Current objective
         if (!currentObjective.isEmpty()) {
             float objW = currentObjective.length() * 10 + 30;
@@ -4815,8 +4770,8 @@ public class ChernobylGameCore {
             drawHUDText(contText, boxX + 20, boxY + 10, 2, 0.6f, 0.45f, 0.2f, 1f);
         }
 
-        if (creativeMode && DEV_CREATIVE_MODE_ENABLED) {
-            String blockLabel = CREATIVE_PALETTE[Math.max(0, Math.min(CREATIVE_PALETTE.length - 1, creativePaletteIndex))].replace('_', ' ').toUpperCase();
+        if (false) {
+            String blockLabel = "";
             String tip = "Creative (" + blockLabel + "): B place | N remove | Backspace clear | [ ] cycle | C exit";
             float tipW = tip.length() * 8f + 30f;
             float tipX = screenW - tipW - 20f;
@@ -4831,107 +4786,15 @@ public class ChernobylGameCore {
     }
 
     private void handleCreativeBuildControls(long window, Vector3f direction) {
-        if (!creativeMode || !DEV_CREATIVE_MODE_ENABLED) {
-            creativePlacePressed = false;
-            creativeBreakPressed = false;
-            creativeClearPressed = false;
-            creativeNextPressed = false;
-            creativePrevPressed = false;
-            return;
-        }
-
-        CreativeHit hit = pickBlockOnRay(direction, CREATIVE_RAY_DISTANCE);
-        Vector3f fallbackTarget = computeCreativeTarget(direction);
-
-        if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
-            if (!creativeNextPressed) {
-                creativeNextPressed = true;
-                creativePaletteIndex = (creativePaletteIndex + 1) % CREATIVE_PALETTE.length;
-                notificationText = "Creative block: " + CREATIVE_PALETTE[creativePaletteIndex];
-                notificationTimer = 1.2f;
-            }
-        } else {
-            creativeNextPressed = false;
-        }
-
-        if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS) {
-            if (!creativePrevPressed) {
-                creativePrevPressed = true;
-                creativePaletteIndex = (creativePaletteIndex - 1 + CREATIVE_PALETTE.length) % CREATIVE_PALETTE.length;
-                notificationText = "Creative block: " + CREATIVE_PALETTE[creativePaletteIndex];
-                notificationTimer = 1.2f;
-            }
-        } else {
-            creativePrevPressed = false;
-        }
-
-        if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
-            if (!creativePlacePressed) {
-                creativePlacePressed = true;
-                Vector3f placement = null;
-                if (hit != null && hit.point != null && hit.normal != null && hit.normal.lengthSquared() > 0.0001f) {
-                    placement = new Vector3f(hit.point).add(new Vector3f(hit.normal).normalize().mul(BLOCK_SIZE * 0.5f));
-                } else {
-                    placement = fallbackTarget;
-                }
-                placement = snapToCreativeGrid(placement);
-                String tex = CREATIVE_PALETTE[Math.max(0, Math.min(CREATIVE_PALETTE.length - 1, creativePaletteIndex))];
-                if (placeCreativeBlock(placement, tex)) {
-                    notificationText = String.format(Locale.US,
-                        "Placed %s at (%.1f, %.1f, %.1f)", tex, placement.x, placement.y, placement.z);
-                } else {
-                    notificationText = "No valid spot for creative block";
-                }
-                notificationTimer = 1.5f;
-            }
-        } else {
-            creativePlacePressed = false;
-        }
-
-        if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
-            if (!creativeBreakPressed) {
-                creativeBreakPressed = true;
-                TexturedGameObject block = (hit != null) ? hit.block : findCreativeBlockAt(fallbackTarget);
-                if (block != null && removeBlock(block)) {
-                    notificationText = block.isCreativeBlock ? "Removed creative block" : "Removed structural block";
-                } else {
-                    notificationText = "No block to remove";
-                }
-                notificationTimer = 1.2f;
-            }
-        } else {
-            creativeBreakPressed = false;
-        }
-
-        if (glfwGetKey(window, GLFW_KEY_BACKSPACE) == GLFW_PRESS) {
-            if (!creativeClearPressed) {
-                creativeClearPressed = true;
-                int cleared = clearCreativeBlocks();
-                notificationText = cleared > 0 ? ("Cleared " + cleared + " creative blocks") : "No creative blocks to clear";
-                notificationTimer = 1.2f;
-            }
-        } else {
-            creativeClearPressed = false;
-        }
+        // Creative mode disabled
     }
 
     private Vector3f computeCreativeTarget(Vector3f direction) {
-        if (direction == null) return null;
-        Vector3f norm = new Vector3f(direction);
-        if (norm.lengthSquared() < 0.0001f) {
-            norm.set(0, 0, -1);
-        }
-        norm.normalize();
-        Vector3f target = new Vector3f(cameraPos).add(norm.mul(CREATIVE_RAY_DISTANCE));
-        return snapToCreativeGrid(target);
+        return null;
     }
 
     private Vector3f snapToCreativeGrid(Vector3f point) {
-        if (point == null) return null;
-        float snappedX = snapToStep(point.x, CREATIVE_SNAP_STEP);
-        float snappedY = snapToStep(point.y, CREATIVE_SNAP_STEP);
-        float snappedZ = snapToStep(point.z, CREATIVE_SNAP_STEP);
-        return new Vector3f(snappedX, snappedY, snappedZ);
+        return point;
     }
 
     private float snapToStep(float value, float step) {
@@ -4939,33 +4802,15 @@ public class ChernobylGameCore {
     }
 
     private boolean placeCreativeBlock(Vector3f target, String textureName) {
-        if (target == null || textureName == null || textureName.isEmpty()) return false;
-        if (findCreativeBlockAt(target) != null) return false;
-        TexturedGameObject placed = addTexturedCubeAndReturn(target.x, target.y, target.z,
-            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, textureName);
-        placed.isCreativeBlock = true;
-        creativeBlocks.add(placed);
-        savedPlacements.add(new CreativePlacement(textureName, target));
-        saveCreativeEdits();
-        return true;
+        return false;
     }
 
     private int clearCreativeBlocks() {
-        int count = creativeBlocks.size();
-        if (count == 0) return 0;
-        for (TexturedGameObject block : new ArrayList<>(creativeBlocks)) {
-            texturedObjects.remove(block);
-        }
-        creativeBlocks.clear();
-        savedPlacements.clear();
-        saveCreativeEdits();
-        return count;
+        return 0;
     }
 
     private boolean isSameCreativeCell(Vector3f a, Vector3f b) {
-        if (a == null || b == null) return false;
-        float tol = CREATIVE_SNAP_STEP * 0.4f;
-        return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol && Math.abs(a.z - b.z) <= tol;
+        return false;
     }
 
     private String describePlayerLocation(float px, float pz) {
@@ -5058,9 +4903,7 @@ public class ChernobylGameCore {
     }
 
     private void loadCreativeEdits() {
-        creativeBlocks.clear();
-        savedPlacements.clear();
-        savedRemovals.clear();
+        if (savedRemovals == null) savedRemovals = new ArrayList<>();
         Path savePath = Paths.get(CREATIVE_SAVE_FILE);
         if (!Files.exists(savePath)) {
             return;
@@ -5073,19 +4916,7 @@ public class ChernobylGameCore {
                 if (line.isEmpty() || line.startsWith("#")) continue;
                 String[] parts = line.split("\\s+");
                 if (parts.length == 0) continue;
-                if (parts[0].equalsIgnoreCase("PLACE") && parts.length >= 5) {
-                    try {
-                        String tex = parts[1];
-                        float x = Float.parseFloat(parts[2]);
-                        float y = Float.parseFloat(parts[3]);
-                        float z = Float.parseFloat(parts[4]);
-                        CreativePlacement placement = new CreativePlacement(tex, new Vector3f(x, y, z));
-                        savedPlacements.add(placement);
-                        spawnCreativeBlockFromSave(tex, new Vector3f(x, y, z));
-                    } catch (NumberFormatException ignore) {
-                        System.err.println("[CREATIVE] Invalid PLACE entry: " + line);
-                    }
-                } else if (parts[0].equalsIgnoreCase("REMOVE") && parts.length >= 7) {
+                if (parts[0].equalsIgnoreCase("REMOVE") && parts.length >= 7) {
                     try {
                         float x = Float.parseFloat(parts[1]);
                         float y = Float.parseFloat(parts[2]);
@@ -5106,16 +4937,16 @@ public class ChernobylGameCore {
     }
 
     private void spawnCreativeBlockFromSave(String textureName, Vector3f position) {
-        TexturedGameObject obj = addTexturedCubeAndReturn(position.x, position.y, position.z,
-            BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE, textureName);
-        obj.isCreativeBlock = true;
-        creativeBlocks.add(obj);
+        // Creative mode disabled
     }
 
     private void applySavedRemovals() {
-        if (savedRemovals.isEmpty()) return;
+        // Apply saved block removals from creative mode edits
+        // This keeps user's edited rooms accessible
+        if (savedRemovals == null || savedRemovals.isEmpty()) return;
         List<TexturedGameObject> toCull = new ArrayList<>();
         for (CreativeRemoval removal : savedRemovals) {
+            if (removal == null) continue;
             TexturedGameObject victim = findBlockByTransform(removal.position, removal.scale);
             if (victim != null) {
                 toCull.add(victim);
@@ -5125,7 +4956,8 @@ public class ChernobylGameCore {
     }
 
     private TexturedGameObject findBlockByTransform(Vector3f position, Vector3f scale) {
-        float posTol = CREATIVE_SNAP_STEP * 0.25f;
+        if (position == null || scale == null) return null;
+        float posTol = BLOCK_SIZE * 0.25f;
         float scaleTol = BLOCK_SIZE * 0.1f;
         for (TexturedGameObject obj : texturedObjects) {
             if (obj == null || obj.isNPCPart) continue;
@@ -5142,31 +4974,7 @@ public class ChernobylGameCore {
     }
 
     private void saveCreativeEdits() {
-        if (!DEV_CREATIVE_MODE_ENABLED) return;
-        Path savePath = Paths.get(CREATIVE_SAVE_FILE);
-        List<String> out = new ArrayList<>();
-        out.add("# Creative edit log for corridor tuning - auto generated");
-        for (CreativePlacement placement : savedPlacements) {
-            out.add(String.format(Locale.US, "PLACE %s %.3f %.3f %.3f",
-                placement.textureName,
-                placement.position.x,
-                placement.position.y,
-                placement.position.z));
-        }
-        for (CreativeRemoval removal : savedRemovals) {
-            out.add(String.format(Locale.US, "REMOVE %.3f %.3f %.3f %.3f %.3f %.3f",
-                removal.position.x,
-                removal.position.y,
-                removal.position.z,
-                removal.scale.x,
-                removal.scale.y,
-                removal.scale.z));
-        }
-        try {
-            Files.write(savePath, out, StandardCharsets.UTF_8);
-        } catch (IOException ex) {
-            System.err.println("[CREATIVE] Failed to write edits: " + ex.getMessage());
-        }
+        // Creative mode disabled - not saving
     }
 
     private CreativeHit pickBlockOnRay(Vector3f direction, float maxDistance) {
@@ -5264,55 +5072,18 @@ public class ChernobylGameCore {
     }
 
     private boolean removeBlock(TexturedGameObject block) {
-        if (block == null || block.isNPCPart) return false;
-        boolean removed = texturedObjects.remove(block);
-        if (!removed) return false;
-        creativeBlocks.remove(block);
-        if (block.isCreativeBlock) {
-            removePlacementEntry(block.position);
-        } else {
-            if (!removalExists(block.position, block.scale)) {
-                savedRemovals.add(new CreativeRemoval(block.position, block.scale));
-            }
-        }
-        saveCreativeEdits();
-        return true;
+        return false;
     }
 
     private boolean removalExists(Vector3f position, Vector3f scale) {
-        float tol = CREATIVE_SNAP_STEP * 0.25f;
-        float scaleTol = BLOCK_SIZE * 0.1f;
-        for (CreativeRemoval removal : savedRemovals) {
-            if (Math.abs(removal.position.x - position.x) <= tol &&
-                Math.abs(removal.position.y - position.y) <= tol &&
-                Math.abs(removal.position.z - position.z) <= tol &&
-                Math.abs(removal.scale.x - scale.x) <= scaleTol &&
-                Math.abs(removal.scale.y - scale.y) <= scaleTol &&
-                Math.abs(removal.scale.z - scale.z) <= scaleTol) {
-                return true;
-            }
-        }
         return false;
     }
 
     private void removePlacementEntry(Vector3f position) {
-        float tol = CREATIVE_SNAP_STEP * 0.25f;
-        savedPlacements.removeIf(entry ->
-            Math.abs(entry.position.x - position.x) <= tol &&
-            Math.abs(entry.position.y - position.y) <= tol &&
-            Math.abs(entry.position.z - position.z) <= tol);
+        // Creative mode disabled
     }
 
     private TexturedGameObject findCreativeBlockAt(Vector3f target) {
-        if (target == null) return null;
-        float tol = CREATIVE_SNAP_STEP * 0.25f;
-        for (TexturedGameObject block : creativeBlocks) {
-            if (Math.abs(block.position.x - target.x) <= tol &&
-                Math.abs(block.position.y - target.y) <= tol &&
-                Math.abs(block.position.z - target.z) <= tol) {
-                return block;
-            }
-        }
         return null;
     }
 
@@ -12043,26 +11814,7 @@ public class ChernobylGameCore {
             return;
         }
 
-        // Creative mode toggle (C key)
-        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
-            if (!creativeTogglePressed) {
-                creativeTogglePressed = true;
-                if (!DEV_CREATIVE_MODE_ENABLED) {
-                    notificationText = "Creative tools disabled in this build";
-                    notificationTimer = 2.0f;
-                } else {
-                    creativeMode = !creativeMode;
-                    if (creativeMode) {
-                        notificationText = "Creative tools enabled (B=place, N=remove)";
-                    } else {
-                        notificationText = "Creative tools disabled";
-                    }
-                    notificationTimer = 2.0f;
-                }
-            }
-        } else {
-            creativeTogglePressed = false;
-        }
+        // Creative mode toggle disabled
 
         // Ending countdown timer (transitions to ending screen after delay)
         if (endingCountdownActive && endingTimer > 0) {
@@ -12267,7 +12019,7 @@ public class ChernobylGameCore {
         if (sprintKey || sprintPad) {
             speed *= 2.5f;
         }
-        if (creativeMode) {
+        if (false) {
             speed *= 1.35f;
         }
         
@@ -12275,7 +12027,7 @@ public class ChernobylGameCore {
         Vector3f oldPos = new Vector3f(cameraPos);
         Vector3f newPos = new Vector3f(cameraPos);
         
-        boolean frozen = (dialogueActive || machineUIActive) && !creativeMode;
+        boolean frozen = (dialogueActive || machineUIActive);
         float moveForwardAxis = 0f;
         float moveRightAxis = 0f;
         if (!frozen) {
@@ -12694,7 +12446,8 @@ public class ChernobylGameCore {
     }
 
     // Reactor hall mezzanine helpers keep rendering + physics in sync
-    private float getReactorHallStairGround(float px, float pz) {
+    // DISABLED: Stair ground detection (allows player climbing)
+    private float getReactorHallStairGround_DISABLED(float px, float pz) {
         float halfWidth = REACTOR_HALL_STAIRS_WIDTH / 2f + BLOCK_SIZE * 0.3f;
         float totalRun = REACTOR_HALL_STAIRS_RUN * REACTOR_HALL_STAIRS_STEPS;
         boolean runAlongX = REACTOR_HALL_STAIRS_RUN_ALONG_X;
@@ -12742,7 +12495,8 @@ public class ChernobylGameCore {
     }
 
     // Check if player collides with stair structure (prevents passing through from underneath)
-    private boolean checkStairStructureCollision(float x, float y, float z, float playerRadius, float playerHeight) {
+    // DISABLED: Stair collision detection (allows player climbing)
+    private boolean checkStairStructureCollision_DISABLED(float x, float y, float z, float playerRadius, float playerHeight) {
         float PR = playerRadius;
         float playerBottom = y - playerHeight * 0.5f;
         float playerTop = y + playerHeight * 0.5f;
@@ -13082,10 +12836,8 @@ public class ChernobylGameCore {
             return true;
         }
 
-        // === STAIR STRUCTURE COLLISION (prevents passing through from underneath) ===
-        if (checkStairStructureCollision(x, y, z, PR, PLAYER_HEIGHT)) {
-            return true;
-        }
+        // === STAIR STRUCTURE COLLISION DISABLED ===
+        // Allow player to climb stairs freely - removed blocking collision
 
         // === HALL MAP STRUCTURAL WALL COLLISION ===
         // Keep this wall-only so floors/rails/gameplay logic remain unchanged.
